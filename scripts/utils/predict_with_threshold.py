@@ -38,6 +38,7 @@ class LanguageDetectorWithThreshold:
             или tuple (язык, confidence) если return_confidence=True
         """
         # Получаем предсказание и уверенность
+        text = text.replace("\n", " ").replace("\r", " ").strip()
         labels, confidences = self.model.predict(text, k=1)
         
         # Извлекаем метку и уверенность
@@ -71,6 +72,7 @@ class LanguageDetectorWithThreshold:
         Returns:
             list of tuples: [(язык, confidence), ...]
         """
+        text = text.replace("\n", " ").replace("\r", " ").strip()
         labels, confidences = self.model.predict(text, k=k)
         
         results = []

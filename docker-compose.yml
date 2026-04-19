@@ -32,6 +32,7 @@ services:
       - ./scripts:/app/scripts:ro
     environment:
       - PYTHONUNBUFFERED=1
+    # Производит train.csv (70%), val.csv (15%), test.csv (15%)
     command: python scripts/data_processing/split_dataset.py
 
   preprocessor:
@@ -54,6 +55,26 @@ services:
       - PYTHONUNBUFFERED=1
     command: python scripts/training/train_fasttext.py
 
+  threshold_finder:
+    build: .
+    container_name: lang_detection_threshold_finder
+    volumes:
+      - ./output:/app/output
+      - ./scripts:/app/scripts:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: python -m scripts.training.find_threshold
+
+  trainer_sensitive:
+    build: .
+    container_name: lang_detection_trainer_sensitive
+    volumes:
+      - ./output:/app/output
+      - ./scripts:/app/scripts:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: python -m scripts.training.train_sensitive_classifiers
+
   benchmark:
     build: .
     container_name: lang_detection_benchmark
@@ -64,6 +85,16 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
     command: python benchmarks/benchmark_speed.py
+
+  evaluator:
+    build: .
+    container_name: lang_detection_evaluator
+    volumes:
+      - ./output:/app/output
+      - ./scripts:/app/scripts:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: python -m scripts.training.evaluate_final
 
   comparer:
     build: .

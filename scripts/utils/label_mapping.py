@@ -11,6 +11,8 @@ LABEL_MAPPING = {
     'ur_arab': 'ur',
     'ne': 'ne',
     'ne_lat': 'ne',
+    'sr_lat': 'sr',
+    'sr_cyr': 'sr',
 }
 
 def merge_label(label):

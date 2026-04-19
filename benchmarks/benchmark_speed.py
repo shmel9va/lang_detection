@@ -1,7 +1,12 @@
 """
-Бенчмарк для измерения скорости предсказания модели
+Бенчмарк для измерения скорости предсказания модели.
+
+Разделён на два блока:
+  A. Бенчмарк fastText-only (существующий, не изменён)
+  B. Бенчмарк полного пайплайна LanguageDetector (новый)
 """
 import fasttext
+import os
 import pandas as pd
 import time
 import numpy as np
@@ -232,6 +237,97 @@ def generate_report(results):
     print(f"\nОтчет сохранен: {output_file}")
 
 
+def benchmark_full_pipeline(texts, model_path="output/lang_detection_model.bin",
+                            classifiers_dir="output/sensitive_classifiers",
+                            n_warmup=10, n_measure=200):
+    """
+    Бенчмарк полного пайплайна LanguageDetector:
+    normalize → script_detector → fastText → router → postprocess.
+
+    Включает все уровни, которые видит реальный запрос в проде.
+    """
+    print("\n" + "=" * 80)
+    print("7. БЕНЧМАРК: ПОЛНЫЙ ПАЙПЛАЙН (LanguageDetector)")
+    print("=" * 80)
+
+    try:
+        from scripts.detection.detector import LanguageDetector
+    except ImportError as e:
+        print(f"  Не удалось импортировать LanguageDetector: {e}")
+        return None
+
+    if not os.path.exists(model_path):
+        print(f"  Модель не найдена: {model_path}")
+        return None
+
+    print(f"\nЗагрузка LanguageDetector...")
+    t0 = time.time()
+    detector = LanguageDetector(
+        fasttext_model_path=model_path,
+        sensitive_classifiers_dir=classifiers_dir,
+        threshold=0.5,
+        router_verbose=False,
+    )
+    load_time = time.time() - t0
+    print(f"Время загрузки: {load_time:.3f} сек")
+
+    sample = texts[:max(n_warmup + n_measure, len(texts))]
+
+    # Прогрев
+    for text in sample[:n_warmup]:
+        _ = detector.detect(text)
+
+    # Измерение
+    measure_texts = sample[n_warmup: n_warmup + n_measure]
+    if not measure_texts:
+        measure_texts = sample[:50]
+
+    times = []
+    for text in measure_texts:
+        t0 = time.time()
+        _ = detector.detect(text)
+        times.append(time.time() - t0)
+
+    times = np.array(times) * 1000  # → мс
+
+    print(f"\nСтатистика ({len(times)} измерений, мс):")
+    print(f"  Среднее:    {times.mean():.3f} мс")
+    print(f"  Медиана:    {np.median(times):.3f} мс")
+    print(f"  P95:        {np.percentile(times, 95):.3f} мс")
+    print(f"  P99:        {np.percentile(times, 99):.3f} мс")
+    print(f"  Минимум:    {times.min():.3f} мс")
+    print(f"  Максимум:   {times.max():.3f} мс")
+
+    throughput = 1000.0 / times.mean()
+    print(f"\nThroughput:   {throughput:.0f} текстов/сек")
+
+    target_ms = 30.0
+    ok = times.mean() < target_ms
+    print(f"\nЦелевой порог: {target_ms} мс → {'✓ ВЫПОЛНЕН' if ok else '✗ превышен'}")
+
+    # Замеряем разбивку по длине
+    groups = {
+        "< 50 символов":    [t for t in measure_texts if len(t) < 50],
+        "50–200 символов":  [t for t in measure_texts if 50 <= len(t) < 200],
+        "200–500 символов": [t for t in measure_texts if 200 <= len(t) < 500],
+        "> 500 символов":   [t for t in measure_texts if len(t) >= 500],
+    }
+
+    print(f"\nВлияние длины текста:")
+    for group, gtexts in groups.items():
+        if len(gtexts) < 3:
+            continue
+        gtimes = []
+        for text in gtexts[:50]:
+            t0 = time.time()
+            _ = detector.detect(text)
+            gtimes.append((time.time() - t0) * 1000)
+        print(f"  {group:<22}: {np.mean(gtimes):.3f} мс  (n={len(gtimes)})")
+
+    return {"mean_ms": float(times.mean()), "p99_ms": float(np.percentile(times, 99)),
+            "throughput": throughput, "load_time": load_time}
+
+
 def main():
     """
     Запуск всех бенчмарков
@@ -287,7 +383,24 @@ def main():
     
     # Итоговый отчет
     generate_report(results)
-    
+
+    # 7. Полный пайплайн LanguageDetector
+    pipeline_results = benchmark_full_pipeline(texts)
+    if pipeline_results:
+        results["pipeline_mean_ms"] = pipeline_results["mean_ms"]
+        results["pipeline_p99_ms"] = pipeline_results["p99_ms"]
+        results["pipeline_throughput"] = pipeline_results["throughput"]
+
+        # Дописываем сравнение в файл отчёта
+        output_file = "output/speed_benchmark.txt"
+        with open(output_file, "a", encoding="utf-8") as f:
+            f.write("\n\nПОЛНЫЙ ПАЙПЛАЙН (LanguageDetector)\n")
+            f.write("-" * 40 + "\n")
+            f.write(f"Среднее время:  {pipeline_results['mean_ms']:.3f} мс\n")
+            f.write(f"P99:            {pipeline_results['p99_ms']:.3f} мс\n")
+            f.write(f"Throughput:     {pipeline_results['throughput']:.0f} текстов/сек\n")
+            f.write(f"Целевой порог 30 мс: {'выполнен' if pipeline_results['mean_ms'] < 30 else 'превышен'}\n")
+
     print("\n" + "=" * 80)
     print("БЕНЧМАРК ЗАВЕРШЕН")
     print("=" * 80 + "\n")

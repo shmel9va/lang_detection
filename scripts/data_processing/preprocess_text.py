@@ -4,6 +4,62 @@
 import pandas as pd
 import re
 import os
+import unicodedata
+
+# Паттерн для удаления emoji
+_EMOJI_RE = re.compile(
+    "[\U0001F600-\U0001F64F"
+    "\U0001F300-\U0001F5FF"
+    "\U0001F680-\U0001F6FF"
+    "\U0001F1E0-\U0001F1FF"
+    "\U00002600-\U000026FF"
+    "\U00002700-\U000027BF"
+    "\U0000FE00-\U0000FE0F"
+    "\U0001F900-\U0001F9FF"
+    "\U00010000-\U0010FFFF"  # дополнительные символы Unicode
+    "]+",
+    flags=re.UNICODE,
+)
+
+
+def normalize_for_detection(text):
+    """
+    Лёгкая нормализация текста перед определением языка.
+    Применяется ДО детектора скрипта и fastText.
+
+    Выполняет:
+    - Unicode NFKC нормализацию (приводит арабские/еврейские формы к базовым)
+    - Удаление URL и email
+    - Удаление телефонных номеров
+    - Удаление emoji
+    - Нормализацию пробелов
+
+    НЕ делает lowercase и НЕ удаляет Unicode-буквы —
+    детектор скрипта работает с оригинальными символами.
+    """
+    if not text:
+        return ""
+    text = str(text)
+
+    # 1. NFKC нормализация: приводит презентационные формы к базовым
+    text = unicodedata.normalize("NFKC", text)
+
+    # 2. Удаляем URL
+    text = re.sub(r"https?://\S+|www\.\S+", " ", text, flags=re.IGNORECASE)
+
+    # 3. Удаляем email
+    text = re.sub(r"\S+@\S+\.\S+", " ", text)
+
+    # 4. Удаляем телефонные номера (7+ цифр, возможно со знаком + и разделителями)
+    text = re.sub(r"\+?[\d][\d\s\-\(\)\.]{5,}\d", " ", text)
+
+    # 5. Удаляем emoji
+    text = _EMOJI_RE.sub(" ", text)
+
+    # 6. Нормализуем пробелы
+    text = re.sub(r"\s+", " ", text).strip()
+
+    return text
 
 
 def remove_html_tags(text):

@@ -1,262 +1,172 @@
 """
-Модуль для поиска оптимального количества эпох через validation set
+Поиск оптимального числа эпох для fastText через output/val.csv.
+
+ВАЖНО: fastText не поддерживает checkpoint per epoch — каждую точку
+надо обучать заново от нуля. Поэтому проверяем каждые STEP_EPOCHS эпох,
+а не каждую.
+
+Использует output/val.csv (выделенная валидационная выборка),
+а не повторный split внутри train.
 """
+
+import os
 import fasttext
 import pandas as pd
-import os
-from sklearn.model_selection import train_test_split
 from scripts.utils.label_mapping import merge_label
+
+STEP_EPOCHS = 5        # шаг: 5, 10, 15 ...
+MAX_EPOCHS  = 70
+MIN_DELTA   = 0.001    # прирост accuracy < 0.1% → останавливаемся
+
+BASE_PARAMS = {
+    "lr": 0.1,
+    "wordNgrams": 2,
+    "dim": 150,
+    "minn": 3,
+    "maxn": 6,
+    "minCount": 2,
+    "loss": "softmax",
+    "seed": 42,
+    "verbose": 0,
+}
+
+
+def _read_val(val_file: str, text_col: str, label_col: str):
+    encodings = ["utf-8", "utf-8-sig", "cp1251", "latin-1"]
+    for enc in encodings:
+        try:
+            with open(val_file, "r", encoding=enc, errors="replace") as f:
+                header_line = f.readline().strip()
+                headers = [h.strip("\ufeff") for h in header_line.split(";")]
+            df = pd.read_csv(
+                val_file, sep=";", skiprows=[0, 1], encoding=enc,
+                on_bad_lines="skip", names=headers, engine="python",
+            )
+            return df
+        except Exception:
+            continue
+    raise RuntimeError(f"Не удалось прочитать {val_file}")
 
 
 def find_optimal_epochs(
-    train_file='output/train_preprocessed.csv',
-    text_column='request_text',
-    label_column='result',
-    validation_size=0.15,
-    epochs_to_try=[10, 20, 30, 40, 50, 60, 70],
-    min_delta=0.003,
-    random_state=42
+    train_file: str = "output/train_preprocessed.csv",
+    val_file: str   = "output/val.csv",
+    text_col: str   = "request_text",
+    label_col: str  = "result",
+    step: int       = STEP_EPOCHS,
+    max_epochs: int = MAX_EPOCHS,
+    min_delta: float = MIN_DELTA,
+    random_state: int = 42,
 ):
     """
-    Находит оптимальное количество эпох через validation set.
-    Останавливается, когда прирост accuracy становится меньше min_delta.
-    
-    Args:
-        train_file: путь к train файлу
-        text_column: столбец с текстом
-        label_column: столбец с метками
-        validation_size: размер validation set (0.15 = 15%)
-        epochs_to_try: список эпох для проверки
-        min_delta: минимальный прирост accuracy для продолжения (0.003 = 0.3%)
-        random_state: random seed
-    
+    Перебирает числа эпох [step, 2*step, ..., max_epochs].
+    Для каждого значения обучает fastText на train_file, оценивает на val_file.
+    Останавливается, когда прирост accuracy < min_delta.
+
     Returns:
-        dict: результаты для каждого epoch
-        int: оптимальное количество эпох
+        (results dict, best_epoch int)
     """
-    print("=" * 80)
-    print("ПОИСК ОПТИМАЛЬНОГО КОЛИЧЕСТВА ЭПОХ")
-    print("=" * 80)
-    
-    print(f"\nЗагрузка данных: {train_file}")
-    
-    if train_file.endswith('.csv'):
-        with open(train_file, 'r', encoding='utf-8', errors='replace') as f:
-            header_line = f.readline().strip()
-            headers = [h.strip('\ufeff') for h in header_line.split(';')]
-        
-        df = pd.read_csv(train_file, sep=';', skiprows=[0, 1], encoding='utf-8', 
-                        on_bad_lines='skip', names=headers, engine='python')
-    else:
-        df = pd.read_excel(train_file)
-    
-    print(f"Загружено записей: {len(df)}")
-    
-    print(f"\nРазделение на train/validation ({int((1-validation_size)*100)}% / {int(validation_size*100)}%)")
-    
-    df_valid = df.dropna(subset=[text_column, label_column]).copy()
-    print(f"Валидных записей: {len(df_valid)}")
-    
-    df_valid['merged_label'] = df_valid[label_column].apply(merge_label)
-    
-    df_train, df_val = train_test_split(
-        df_valid,
-        test_size=validation_size,
-        stratify=df_valid['merged_label'],
-        random_state=random_state
-    )
-    
-    print(f"Train: {len(df_train)} записей")
-    print(f"Validation: {len(df_val)} записей")
-    
-    print("\nПодготовка данных для fastText...")
-    
-    train_txt = 'output/train_for_validation.txt'
-    val_data = []
-    
-    with open(train_txt, 'w', encoding='utf-8') as f:
-        for _, row in df_train.iterrows():
-            label = str(row[label_column]).strip().replace(' ', '_')
-            text = str(row[text_column]).strip()
-            if text and label:
-                f.write(f"__label__{label} {text}\n")
-    
-    for _, row in df_val.iterrows():
-        true_label = merge_label(str(row[label_column]))
-        text = str(row[text_column]).strip()
-        if text and true_label:
-            val_data.append((text, true_label))
-    
-    print(f"Train примеров: {len(df_train)}")
-    print(f"Validation примеров: {len(val_data)}")
-    
-    print(f"\nОбучение моделей с разными количествами эпох")
-    print("-" * 80)
-    
-    results = {}
-    best_epoch = epochs_to_try[0]
-    best_accuracy = 0
-    prev_accuracy = 0
-    early_stopped = False
-    
-    base_params = {
-        'lr': 0.1,
-        'wordNgrams': 2,
-        'dim': 150,
-        'minn': 3,
-        'maxn': 6,
-        'minCount': 2,
-        'loss': 'softmax',
-        'seed': 42,
-        'verbose': 0
-    }
-    
-    for i, epoch in enumerate(epochs_to_try):
-        print(f"\nEpoch = {epoch}:")
-        
-        model = fasttext.train_supervised(
-            input=train_txt,
-            epoch=epoch,
-            **base_params
-        )
-        
-        correct = 0
-        for text, true_label in val_data:
-            predictions = model.predict(text, k=1)
-            predicted_label_orig = predictions[0][0].replace('__label__', '')
-            predicted_label = merge_label(predicted_label_orig)
-            
-            if predicted_label == true_label:
-                correct += 1
-        
-        accuracy = correct / len(val_data)
-        
-        results[epoch] = {
-            'accuracy': accuracy,
-            'correct': correct,
-            'total': len(val_data)
-        }
-        
-        if accuracy > best_accuracy:
-            best_accuracy = accuracy
-            best_epoch = epoch
-            status = "NEW BEST"
-        else:
-            status = ""
-        
-        improvement = accuracy - prev_accuracy if i > 0 else accuracy
-        print(f"  Validation Accuracy: {accuracy:.2%} ({correct}/{len(val_data)}) {status}")
-        
-        if i > 0 and improvement < min_delta:
-            print(f"  Прирост {improvement:.4f} < {min_delta:.4f} - останавливаем поиск")
-            early_stopped = True
+    print("=" * 70)
+    print("ПОИСК ОПТИМАЛЬНОГО ЧИСЛА ЭПОХ")
+    print(f"  Шаг: каждые {step} эпох  |  Макс: {max_epochs}")
+    print(f"  Причина шага: fastText обучается заново для каждой точки")
+    print(f"  Val: {val_file}  (выделенная, не пересечётся с test)")
+    print("=" * 70)
+
+    # ── Подготовка val данных ────────────────────────────────────────
+    val_df = _read_val(val_file, text_col, label_col)
+    val_data = [
+        (str(row[text_col]).strip(), merge_label(str(row[label_col])))
+        for _, row in val_df.iterrows()
+        if str(row[text_col]).strip() and str(row[label_col]).strip()
+    ]
+    print(f"Val примеров: {len(val_data)}")
+
+    # ── Подготовка train в формате fastText ─────────────────────────
+    train_txt = "output/train_for_epoch_search.txt"
+    encodings = ["utf-8", "utf-8-sig", "cp1251", "latin-1"]
+    train_df = None
+    for enc in encodings:
+        try:
+            with open(train_file, "r", encoding=enc, errors="replace") as f:
+                header_line = f.readline().strip()
+                headers = [h.strip("\ufeff") for h in header_line.split(";")]
+            train_df = pd.read_csv(
+                train_file, sep=";", skiprows=[0, 1], encoding=enc,
+                on_bad_lines="skip", names=headers, engine="python",
+            )
             break
-        
+        except Exception:
+            continue
+
+    if train_df is None:
+        raise RuntimeError(f"Не удалось прочитать {train_file}")
+
+    with open(train_txt, "w", encoding="utf-8") as f:
+        for _, row in train_df.iterrows():
+            label = str(row[label_col]).strip().replace(" ", "_")
+            text  = str(row[text_col]).strip()
+            if label and text:
+                f.write(f"__label__{label} {text}\n")
+
+    print(f"Train примеров для fastText: {len(train_df)}")
+
+    # ── Перебор эпох ────────────────────────────────────────────────
+    epochs_to_try = list(range(step, max_epochs + 1, step))
+    results = {}
+    best_epoch    = epochs_to_try[0]
+    best_accuracy = 0.0
+    prev_accuracy = None
+
+    print(f"\n{'Epoch':>6}  {'Val Accuracy':>14}  {'Δ':>8}  {'':}")
+    print("-" * 45)
+
+    for epoch in epochs_to_try:
+        model = fasttext.train_supervised(input=train_txt, epoch=epoch, **BASE_PARAMS)
+
+        correct = sum(
+            1 for text, true in val_data
+            if merge_label(model.predict(text, k=1)[0][0].replace("__label__", "")) == true
+        )
+        accuracy = correct / len(val_data)
+        delta    = (accuracy - prev_accuracy) if prev_accuracy is not None else float("inf")
+
+        is_best = accuracy > best_accuracy
+        if is_best:
+            best_accuracy = accuracy
+            best_epoch    = epoch
+
+        results[epoch] = {"accuracy": accuracy, "correct": correct, "total": len(val_data)}
+
+        delta_str = f"+{delta:.4f}" if delta >= 0 else f"{delta:.4f}"
+        marker    = "← BEST" if is_best else ""
+        print(f"{epoch:>6}  {accuracy:>14.2%}  {delta_str:>8}  {marker}")
+
+        if prev_accuracy is not None and delta < min_delta:
+            print(f"\n  Прирост {delta:.4f} < {min_delta} — останавливаемся.")
+            break
+
         prev_accuracy = accuracy
-    
-    print("\n" + "=" * 80)
-    print("РЕЗУЛЬТАТЫ")
-    print("=" * 80)
-    
-    if early_stopped:
-        print(f"\nОстановлено досрочно: прирост accuracy < {min_delta:.4f}")
-    
-    print(f"\n{'Epoch':<10} {'Accuracy':<15} {'Correct/Total':<20} {'Status':<10}")
-    print("-" * 80)
-    
-    for epoch in results.keys():
-        acc = results[epoch]['accuracy']
-        correct = results[epoch]['correct']
-        total = results[epoch]['total']
-        status = "← BEST" if epoch == best_epoch else ""
-        
-        print(f"{epoch:<10} {acc:<15.2%} {correct}/{total:<15} {status}")
-    
-    print("\n" + "=" * 80)
-    print(f"ОПТИМАЛЬНОЕ КОЛИЧЕСТВО ЭПОХ: {best_epoch}")
-    print(f"Validation Accuracy: {best_accuracy:.2%}")
-    print("=" * 80)
-    
-    print(f"\nГрафик Validation Accuracy:")
-    print("-" * 80)
-    
-    max_bar_length = 50
-    for epoch in results.keys():
-        acc = results[epoch]['accuracy']
-        bar_length = int(acc * max_bar_length)
-        bar = "█" * bar_length
-        marker = "◄" if epoch == best_epoch else ""
-        print(f"Epoch {epoch:3d}: {bar} {acc:.2%} {marker}")
-    
-    print("-" * 80)
-    
-    print(f"\nАнализ:")
-    print("-" * 80)
-    
-    tested_epochs = list(results.keys())
-    accuracies = [results[epoch]['accuracy'] for epoch in tested_epochs]
-    max_acc_idx = accuracies.index(max(accuracies))
-    
-    if early_stopped:
-        print(f"Оптимум найден на epoch={best_epoch}")
-        print(f"  Прирост accuracy стал меньше {min_delta:.4f} - дальнейшее обучение не эффективно")
-    elif max_acc_idx < len(tested_epochs) - 1:
-        print(f"Оптимум найден на epoch={best_epoch}")
-        print(f"  После этого accuracy не улучшается")
-        
-        after_peak = accuracies[max_acc_idx+1:]
-        if any(acc < best_accuracy - 0.01 for acc in after_peak):
-            print(f"Accuracy падает после epoch={best_epoch} - переобучение!")
-        else:
-            print(f"Accuracy стабильна после пика")
-    else:
-        print(f"Лучший результат на последней проверенной эпохе (epoch={best_epoch})")
-        print(f"  Рекомендация: увеличить диапазон epochs_to_try")
-    
-    print("=" * 80)
-    
-    output_dir = 'output'
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-    
-    results_file = os.path.join(output_dir, 'epoch_validation_results.txt')
-    with open(results_file, 'w', encoding='utf-8') as f:
-        f.write("РЕЗУЛЬТАТЫ ПОИСКА ОПТИМАЛЬНОГО КОЛИЧЕСТВА ЭПОХ\n")
-        f.write("=" * 80 + "\n\n")
-        f.write(f"Параметры:\n")
-        f.write(f"  Train размер: {len(df_train)}\n")
-        f.write(f"  Validation размер: {len(val_data)}\n")
-        f.write(f"  Validation ratio: {validation_size:.1%}\n\n")
-        
-        f.write(f"{'Epoch':<10} {'Accuracy':<15} {'Correct/Total':<20}\n")
-        f.write("-" * 80 + "\n")
-        
-        for epoch in results.keys():
-            acc = results[epoch]['accuracy']
-            correct = results[epoch]['correct']
-            total = results[epoch]['total']
-            marker = " ← BEST" if epoch == best_epoch else ""
-            f.write(f"{epoch:<10} {acc:<15.2%} {correct}/{total:<15}{marker}\n")
-        
-        f.write("\n" + "=" * 80 + "\n")
-        f.write(f"ОПТИМАЛЬНОЕ КОЛИЧЕСТВО ЭПОХ: {best_epoch}\n")
-        f.write(f"Validation Accuracy: {best_accuracy:.2%}\n")
-        f.write("=" * 80 + "\n")
-    
-    print(f"\nРезультаты сохранены: {results_file}")
-    
+
+    # ── Итог ────────────────────────────────────────────────────────
+    print(f"\n{'='*70}")
+    print(f"ОПТИМУМ: epoch={best_epoch}  Accuracy={best_accuracy:.2%}")
+    print(f"{'='*70}")
+
+    results_file = "output/epoch_validation_results.txt"
+    with open(results_file, "w", encoding="utf-8") as f:
+        f.write("ПОИСК ОПТИМАЛЬНОГО ЧИСЛА ЭПОХ\n")
+        f.write(f"Train: {train_file}  |  Val: {val_file}\n\n")
+        f.write(f"{'Epoch':>6}  {'Accuracy':>10}  {'Correct/Total':>15}\n")
+        f.write("-" * 40 + "\n")
+        for ep, r in sorted(results.items()):
+            marker = " ← BEST" if ep == best_epoch else ""
+            f.write(f"{ep:>6}  {r['accuracy']:>10.2%}  {r['correct']}/{r['total']}{marker}\n")
+        f.write(f"\nОПТИМУМ: epoch={best_epoch}  Accuracy={best_accuracy:.2%}\n")
+
+    print(f"Результаты: {results_file}")
     return results, best_epoch
 
 
 if __name__ == "__main__":
-    # Запуск поиска оптимального количества эпох
-    results, best_epoch = find_optimal_epochs(
-        train_file='output/train_preprocessed.csv',
-        validation_size=0.15,
-        epochs_to_try=[10, 20, 30, 40, 50],
-        random_state=42
-    )
-    
-    print(f"\nОптимальное количество эпох: {best_epoch}")
-    print(f"  Используйте это значение для финального обучения")
-
+    find_optimal_epochs()

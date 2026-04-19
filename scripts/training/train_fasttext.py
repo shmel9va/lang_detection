@@ -237,11 +237,9 @@ def train_fasttext_model(
         try:
             results, optimal_epoch = find_optimal_epochs(
                 train_file=train_file,
-                text_column=text_column,
-                label_column=label_column,
-                validation_size=validation_size,
-                epochs_to_try=epochs_to_try,
-                random_state=42
+                val_file="output/val.csv",
+                text_col=text_column,
+                label_col=label_column,
             )
             
             print(f"\nНайдено оптимальное количество эпох: {optimal_epoch}")
