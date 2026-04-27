@@ -5,7 +5,7 @@ services:
     build: .
     container_name: lang_detection_analyzer
     volumes:
-      - ./lang_detection_hackathon.csv:/app/lang_detection_hackathon.csv:ro
+      - ./lang_detection_diploma.csv:/app/lang_detection_diploma.csv:ro
       - ./output:/app/output
       - ./scripts:/app/scripts:ro
     environment:
@@ -16,7 +16,7 @@ services:
     build: .
     container_name: lang_detection_cleaner
     volumes:
-      - ./lang_detection_hackathon.csv:/app/lang_detection_hackathon.csv:ro
+      - ./lang_detection_diploma.csv:/app/lang_detection_diploma.csv:ro
       - ./output:/app/output
       - ./scripts:/app/scripts:ro
     environment:
@@ -27,7 +27,7 @@ services:
     build: .
     container_name: lang_detection_splitter
     volumes:
-      - ./lang_detection_hackathon.csv:/app/lang_detection_hackathon.csv:ro
+      - ./lang_detection_diploma.csv:/app/lang_detection_diploma.csv:ro
       - ./output:/app/output
       - ./scripts:/app/scripts:ro
     environment:
@@ -105,4 +105,3 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
     command: python benchmarks/compare_models.py
-

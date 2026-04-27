@@ -44,27 +44,16 @@ PAIRS: List[Tuple[str, str, Type[SensitivePairClassifier]]] = [
 # I/O утилиты
 # ──────────────────────────────────────────────────────────────────────
 
-def _read_csv(path: str) -> Optional[pd.DataFrame]:
-    """Читает CSV с поддержкой разных кодировок."""
-    encodings = ["utf-8", "utf-8-sig", "cp1251", "latin-1"]
-    for enc in encodings:
+def _read_csv(path: str):
+    """Reads CSV (sep=;, cp1251/utf-8) files."""
+    for enc in ['utf-8', 'utf-8-sig', 'cp1251', 'latin-1']:
         try:
-            with open(path, "r", encoding=enc, errors="replace") as f:
-                header_line = f.readline().strip()
-                headers = [h.strip("\ufeff") for h in header_line.split(";")]
-            df = pd.read_csv(
-                path,
-                sep=";",
-                skiprows=[0, 1],
-                encoding=enc,
-                on_bad_lines="skip",
-                names=headers,
-                engine="python",
-            )
-            return df
+            return pd.read_csv(path, sep=';', encoding=enc, on_bad_lines='skip')
+        except UnicodeDecodeError:
+            continue
         except Exception:
             continue
-    print(f"  ОШИБКА: не удалось прочитать {path}")
+    print(f"  ERROR: cannot read {path}")
     return None
 
 

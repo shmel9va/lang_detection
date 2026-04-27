@@ -32,20 +32,15 @@ BASE_PARAMS = {
 
 
 def _read_val(val_file: str, text_col: str, label_col: str):
-    encodings = ["utf-8", "utf-8-sig", "cp1251", "latin-1"]
-    for enc in encodings:
+    """Reads val CSV with encoding fallback."""
+    for enc in ['utf-8', 'utf-8-sig', 'cp1251', 'latin-1']:
         try:
-            with open(val_file, "r", encoding=enc, errors="replace") as f:
-                header_line = f.readline().strip()
-                headers = [h.strip("\ufeff") for h in header_line.split(";")]
-            df = pd.read_csv(
-                val_file, sep=";", skiprows=[0, 1], encoding=enc,
-                on_bad_lines="skip", names=headers, engine="python",
-            )
-            return df
+            return pd.read_csv(val_file, sep=';', encoding=enc, on_bad_lines='skip')
+        except UnicodeDecodeError:
+            continue
         except Exception:
             continue
-    raise RuntimeError(f"Не удалось прочитать {val_file}")
+    raise RuntimeError(f"Cannot read {val_file}")
 
 
 def find_optimal_epochs(
@@ -76,7 +71,8 @@ def find_optimal_epochs(
     # ── Подготовка val данных ────────────────────────────────────────
     val_df = _read_val(val_file, text_col, label_col)
     val_data = [
-        (str(row[text_col]).strip(), merge_label(str(row[label_col])))
+        (str(row[text_col]).replace("\n", " ").replace("\r", " ").strip(),
+         merge_label(str(row[label_col])))
         for _, row in val_df.iterrows()
         if str(row[text_col]).strip() and str(row[label_col]).strip()
     ]
@@ -84,23 +80,17 @@ def find_optimal_epochs(
 
     # ── Подготовка train в формате fastText ─────────────────────────
     train_txt = "output/train_for_epoch_search.txt"
-    encodings = ["utf-8", "utf-8-sig", "cp1251", "latin-1"]
     train_df = None
-    for enc in encodings:
+    for enc in ['utf-8', 'utf-8-sig', 'cp1251', 'latin-1']:
         try:
-            with open(train_file, "r", encoding=enc, errors="replace") as f:
-                header_line = f.readline().strip()
-                headers = [h.strip("\ufeff") for h in header_line.split(";")]
-            train_df = pd.read_csv(
-                train_file, sep=";", skiprows=[0, 1], encoding=enc,
-                on_bad_lines="skip", names=headers, engine="python",
-            )
+            train_df = pd.read_csv(train_file, sep=';', encoding=enc, on_bad_lines='skip')
             break
+        except UnicodeDecodeError:
+            continue
         except Exception:
             continue
-
     if train_df is None:
-        raise RuntimeError(f"Не удалось прочитать {train_file}")
+        raise RuntimeError(f"Cannot read {train_file}")
 
     with open(train_txt, "w", encoding="utf-8") as f:
         for _, row in train_df.iterrows():
@@ -126,7 +116,10 @@ def find_optimal_epochs(
 
         correct = sum(
             1 for text, true in val_data
-            if merge_label(model.predict(text, k=1)[0][0].replace("__label__", "")) == true
+            if merge_label(
+                model.predict(text.replace("\n", " ").replace("\r", " "), k=1)[0][0]
+                .replace("__label__", "")
+            ) == true
         )
         accuracy = correct / len(val_data)
         delta    = (accuracy - prev_accuracy) if prev_accuracy is not None else float("inf")

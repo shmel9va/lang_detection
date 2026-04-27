@@ -81,49 +81,23 @@ def prepare_fasttext_data(df, text_column='request_text', label_column='result',
 
 
 def read_data_file(file_path):
-    """
-    Читает данные из файла (CSV или Excel)
-    """
-    if file_path.endswith('.csv'):
-        try:
-            # Пробуем разные кодировки
-            encodings = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1251', 'iso-8859-1']
-            df = None
-            
-            for encoding in encodings:
-                try:
-                    # Читаем первую строку для получения заголовков
-                    with open(file_path, 'r', encoding=encoding, errors='replace') as f:
-                        header_line = f.readline().strip()
-                        headers = header_line.split(';')
-                    
-                    # Читаем данные, пропуская первую строку (заголовки) и вторую (типы данных)
-                    df = pd.read_csv(file_path, sep=';', skiprows=[0, 1], encoding=encoding, on_bad_lines='skip', names=headers)
-                    break
-                except UnicodeDecodeError:
-                    continue
-                except Exception as e:
-                    continue
-            
-            if df is None:
-                # Последняя попытка с обработкой ошибок
-                with open(file_path, 'r', encoding='utf-8-sig', errors='replace') as f:
-                    header_line = f.readline().strip()
-                    headers = [h.strip('\ufeff') for h in header_line.split(';')]  # Убираем BOM
-                df = pd.read_csv(file_path, sep=';', skiprows=[0, 1], encoding='utf-8', on_bad_lines='skip', names=headers, engine='python')
-            
-            return df
-        except Exception as e:
-            print(f"Ошибка при чтении CSV файла {file_path}: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
-    else:
+    """Reads CSV (sep=;, cp1251/utf-8) or Excel file."""
+    if file_path.endswith('.xlsx') or file_path.endswith('.xls'):
         try:
             return pd.read_excel(file_path)
         except Exception as e:
-            print(f"Ошибка при чтении Excel файла {file_path}: {e}")
+            print(f"Excel read error {file_path}: {e}")
             return None
+    for enc in ['utf-8', 'utf-8-sig', 'cp1251', 'latin-1']:
+        try:
+            return pd.read_csv(file_path, sep=';', encoding=enc, on_bad_lines='skip')
+        except UnicodeDecodeError:
+            continue
+        except Exception as e:
+            print(f"CSV read error ({enc}) {file_path}: {e}")
+            continue
+    print(f"Cannot read file: {file_path}")
+    return None
 
 def train_fasttext_model(
     train_file='output/train_preprocessed.csv',
@@ -534,8 +508,8 @@ def train_fasttext_model(
         f.write(f"Word n-grams: 2\n")
         f.write(f"Dimension: 100\n")
         f.write(f"Loss: one-vs-all\n")
-        f.write(f"\nВАЖНО: Модель обучалась на исходных метках (uz_lat, uz_kir, ur_lat, ur_arab, ne, ne_lat)\n")
-        f.write(f"Оценка выполняется по объединенным меткам (uz, ur, ne)\n\n")
+        f.write(f"\nВАЖНО: Модель обучалась на исходных метках (hy_arm, hy_lat, ka, ka_lat, uz_lat, uz_cyr, ur_ur, ur_lat, ne_nep, ne_lat, sr_cyr, sr_lat)\n")
+        f.write(f"Оценка выполняется по объединённым меткам (hy, ka, uz, ur, ne, sr)\n\n")
         
         f.write("ОБЩИЕ МЕТРИКИ\n")
         f.write("-" * 80 + "\n")

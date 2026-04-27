@@ -22,17 +22,16 @@ from scripts.utils.label_mapping import merge_labels_in_series
 # Чтение датасета
 # ──────────────────────────────────────────────────────────────────────
 
-def _read_csv(path: str) -> pd.DataFrame:
-    encodings = ["utf-8", "utf-8-sig", "cp1251", "latin-1"]
-    for enc in encodings:
+def _read_file(path: str) -> pd.DataFrame:
+    """Читает CSV (разделитель ;, кодировки cp1251/utf-8) или Excel."""
+    if path.endswith(".xlsx") or path.endswith(".xls"):
+        df = pd.read_excel(path)
+        print(f"  Файл загружен как Excel: {path}")
+        return df
+
+    for enc in ["utf-8", "utf-8-sig", "cp1251", "latin-1"]:
         try:
-            with open(path, "r", encoding=enc, errors="replace") as f:
-                header_line = f.readline().strip()
-                headers = [h.strip("\ufeff") for h in header_line.split(";")]
-            df = pd.read_csv(
-                path, sep=";", skiprows=[0, 1], encoding=enc,
-                on_bad_lines="skip", names=headers, engine="python"
-            )
+            df = pd.read_csv(path, sep=";", encoding=enc, on_bad_lines="skip")
             print(f"  Файл загружен с кодировкой: {enc}")
             return df
         except UnicodeDecodeError:
@@ -40,6 +39,9 @@ def _read_csv(path: str) -> pd.DataFrame:
         except Exception:
             continue
     raise RuntimeError(f"Не удалось прочитать файл: {path}")
+
+
+_read_csv = _read_file
 
 
 def _find_language_column(df: pd.DataFrame) -> str:
@@ -76,7 +78,7 @@ def _print_stats(df: pd.DataFrame, col: str, title: str) -> pd.Series:
 # ──────────────────────────────────────────────────────────────────────
 
 def split_dataset(
-    file_path: str = "lang_detection_hackathon.csv",
+    file_path: str = "lang_detection_diploma.csv",
     val_size: float = 0.15,
     test_size: float = 0.15,
     random_state: int = 42,
@@ -102,7 +104,7 @@ def split_dataset(
 
     # ── Загрузка ──────────────────────────────────────────────────
     print(f"\nЗагрузка: {file_path}")
-    df = _read_csv(file_path)
+    df = _read_file(file_path)
     print(f"Загружено записей: {len(df)}")
 
     lang_col = _find_language_column(df)

@@ -1,7 +1,47 @@
 # Комбинированная модель определения языка
 
-Модель для определения языка текста в чатах поддержки Яндекс Такси.  
+Модель для определения языка текста в чатах поддержки такси.  
 Целевой тайминг: ≤ 30 мс на одну классификацию.
+
+---
+
+## Датасет
+
+Файл: `lang_detection_diploma.csv`  
+Поля: `request_text`, `result`  
+Размер: **27 меток × 2 500 примеров = 70 000 строк** ( — 5 000, т.к. входит в две чувствительные пары)
+
+| Метка | Язык | Группа |
+|-------|------|--------|
+| `hy_arm` | Армянский (армянский алфавит) | → `hy` |
+| `hy_lat` | Армянский (латинская транскрипция) | → `hy` |
+| `ka` | Грузинский (грузинский алфавит) | — |
+| `ka_lat` | Грузинский (латинская транскрипция) | → `ka` |
+| `uz_lat` | Узбекский (латиница) | → `uz` |
+| `uz_cyr` | Узбекский (кириллица) | → `uz` |
+| `ur_ur` | Урду (арабский скрипт / насталик) | → `ur` |
+| `ur_lat` | Урду (латинская транскрипция) | → `ur` |
+| `ne_nep` | Непальский (деванагари) | → `ne` |
+| `ne_lat` | Непальский (латинская транскрипция) | → `ne` |
+| `sr_cyr` | Сербский (кириллица) | → `sr` |
+| `sr_lat` | Сербский (латиница) | → `sr` |
+| `he` | Иврит | — |
+| `ar` | Арабский | — |
+| `am` | Амхарский | — |
+| `az` | Азербайджанский | — |
+| `en` | Английский | — |
+| `es` | Испанский | — |
+| `fa` | Персидский | — |
+| `fr` | Французский | — |
+| `hi` | Хинди | — |
+| `kk` | Казахский | — |
+| `pt` | Португальский | — |
+| `ro` | Румынский | — |
+| `ru` | Русский | — |
+| `tr` | Турецкий | — |
+| `uk` | Украинский | — |
+
+Метки с суффиксами объединяются постпроцессором: `hy_arm`/`hy_lat` → `hy`, `ka_lat` → `ka` и т.д.
 
 ---
 
@@ -21,15 +61,15 @@
 ┌──────────────────────────────────────────────┐
 │ 2. Детектор скрипта           БЫСТРЫЙ ПУТЬ   │
 │    Уникальные алфавиты → немедленный ответ   │
-│      hy (армянский)   ka (грузинский)        │
-│      he (иврит)       am (амхарский)         │
+│      hy_arm (армянский)   ka (грузинский)│
+│      he (иврит)           am (амхарский)     │
 └───────────┬──────────────────────────────────┘
             │ если скрипт неоднозначен
             ▼
 ┌──────────────────────────────────────────────┐
 │ 3. fastText                                  │
 │    Топ-2 языка с вероятностями               │
-│    Субклассы: uz_lat, uz_cyr, sr_lat, sr_cyr │
+│    Обучен на всех 27 исходных метках         │
 │    confidence < threshold → "other"          │
 └───────────┬──────────────────────────────────┘
             │
@@ -45,8 +85,12 @@
             │
             ▼
 ┌──────────────────────────────────────────────┐
-│ 5. Постпроцессор                             │
+│ 5. Постпроцессор (merge_label)               │
+│    hy_arm / hy_lat → hy                      │
+│    ka_lat → ka                      │
 │    uz_lat / uz_cyr → uz                      │
+│    ur_ur  / ur_lat → ur                      │
+│    ne_nep / ne_lat → ne                      │
 │    sr_lat / sr_cyr → sr                      │
 │    → ISO 639-1 код + confidence              │
 └──────────────────────────────────────────────┘
@@ -61,7 +105,7 @@
 ## Разбиение данных
 
 ```
-lang_detection_hackathon.csv
+lang_detection_diploma.csv
          │  docker-compose run --rm splitter
          ▼
   train.csv  70%   ← обучение fastText + LogReg
@@ -98,7 +142,7 @@ docker-compose run --rm splitter
 
 Результат: `output/split_statistics.txt`
 
-> Сервис `cleaner` **не используется** — датасет берётся целиком, редкие языки не удаляются.
+> Сервис `cleaner` **не используется** — все 27 классов имеют по 2 500 примеров, редких меток нет.
 
 ---
 
@@ -156,10 +200,9 @@ docker-compose run --rm trainer_sensitive
 Для каждой из 5 чувствительных пар (ar–fa, ru–uk, hy–az, he–ar, ur–hi):
 - обучает LogReg на char n-gram из `train.csv`
 - оценивает на `val.csv` (Accuracy / Precision / Recall / F1)
-- если языка нет в датасете — выводит `ПРОПУСК` и продолжает, не падает
+- все 5 пар имеют данные в новом датасете — `ru_uk.pkl` теперь обучается полноценно
 
-Результаты: `output/sensitive_classifiers/ar_fa.pkl`, `hy_az.pkl`, `he_ar.pkl`, `ur_hi.pkl`  
-(`ru_uk.pkl` появится после добавления украинского)
+Результаты: `output/sensitive_classifiers/ar_fa.pkl`, `hy_az.pkl`, `he_ar.pkl`, `ur_hi.pkl`, `ru_uk.pkl`
 
 **Время:** < 1 минуты.
 
@@ -206,7 +249,7 @@ docker-compose run --rm trainer_sensitive && \
 docker-compose run --rm benchmark
 ```
 
-После — вручную запустить подбор threshold (шаг 4).
+После — вручную запустить финальную оценку (шаг 7).
 
 ---
 
@@ -236,14 +279,17 @@ from scripts.detection.detector import LanguageDetector
 detector = LanguageDetector(
     fasttext_model_path='output/lang_detection_model.bin',
     sensitive_classifiers_dir='output/sensitive_classifiers',
-    threshold=0.5,  # заменить на результат find_optimal_threshold
+    threshold=0.5,  # заменить на результат find_threshold
 )
 
 lang, conf = detector.detect("Привет, как дела?")
 # → ('ru', 0.97)
 
 lang, conf = detector.detect("Բարի՜ Ծաղիկ")
-# → ('hy', 0.99)  — армянский алфавит, быстрый путь
+# → ('hy', 0.99)  — армянский алфавит (hy_arm), быстрый путь
+
+lang, conf = detector.detect("Salam, necəsən?")
+# → ('az', 0.95)  — латиница, fastText
 
 lang, conf = detector.detect("این متن فارسی است. پدر چه گفت؟")
 # → ('fa', 0.99)  — персидские символы پچژگ
@@ -289,7 +335,7 @@ output/
     ├── hy_az.pkl
     ├── he_ar.pkl
     ├── ur_hi.pkl
-    └── ru_uk.pkl                     # после добавления uk
+    └── ru_uk.pkl
 
 scripts/
 ├── detection/
@@ -328,43 +374,56 @@ tar -czf lang_detection_v1.tar.gz \
 
 ## Метрики качества
 
-| Метрика | Значение |
-|---------|---------|
-| Accuracy | 96.12% |
-| Macro F1 | 96.01% |
-| Macro Precision | 96.07% |
-| Macro Recall | 96.00% |
+> Актуальные метрики получить после переобучения на `lang_detection_diploma.csv`.  
+> Запусти шаги 1–7 и смотри `output/final_evaluation.txt`.
 
-Лучшие: he 100%, ar 99.35%, fa 99.01%  
-Проблемные: tr 84.30%, az 85.78%, pt 92.89%
+Ориентировочные цели (датасет сбалансирован, 2 500 примеров на класс):
+
+| Метрика | Цель |
+|---------|------|
+| Accuracy | ≥ 97% |
+| Macro F1 | ≥ 97% |
 
 ---
 
-## Поддерживаемые языки
+## Поддерживаемые языки (на выходе детектора)
 
-| Код | Язык | Скрипт |
-|-----|------|--------|
-| am | Амхарский | Эфиопский |
-| ar | Арабский | Арабское письмо |
-| az | Азербайджанский | Латиница |
-| en | Английский | Латиница |
-| es | Испанский | Латиница |
-| fa | Персидский | Арабское письмо |
-| fr | Французский | Латиница |
-| he | Иврит | Иврит |
-| hi | Хинди | Деванагари |
-| hy | Армянский | Армянский |
-| ka | Грузинский | Грузинский |
-| kk | Казахский | Кириллица |
-| ne | Непальский | Деванагари |
-| pt | Португальский | Латиница |
-| ro | Румынский | Латиница |
-| ru | Русский | Кириллица |
-| sr | Сербский (sr_lat / sr_cyr) | Латиница + Кириллица |
-| tr | Турецкий | Латиница |
-| uk | Украинский ⚠ | Кириллица | ← добавить в датасет |
-| ur | Урду | Арабское письмо |
-| uz | Узбекский (uz_lat / uz_cyr) | Латиница + Кириллица |
+| Код | Язык | Исходные метки | Скрипт |
+|-----|------|----------------|--------|
+| `am` | Амхарский | `am` | Эфиопский (быстрый путь) |
+| `ar` | Арабский | `ar` | Арабское письмо |
+| `az` | Азербайджанский | `az` | Латиница |
+| `en` | Английский | `en` | Латиница |
+| `es` | Испанский | `es` | Латиница |
+| `fa` | Персидский | `fa` | Арабское письмо |
+| `fr` | Французский | `fr` | Латиница |
+| `he` | Иврит | `he` | Иврит (быстрый путь) |
+| `hi` | Хинди | `hi` | Деванагари |
+| `hy` | Армянский | `hy_arm`, `hy_lat` | Армянский / Латиница |
+| `ka` | Грузинский | `ka`, `ka_lat` | Грузинский / Латиница |
+| `kk` | Казахский | `kk` | Кириллица |
+| `ne` | Непальский | `ne_nep`, `ne_lat` | Деванагари / Латиница |
+| `pt` | Португальский | `pt` | Латиница |
+| `ro` | Румынский | `ro` | Латиница |
+| `ru` | Русский | `ru` | Кириллица |
+| `sr` | Сербский | `sr_cyr`, `sr_lat` | Кириллица / Латиница |
+| `tr` | Турецкий | `tr` | Латиница |
+| `uk` | Украинский | `uk` | Кириллица |
+| `ur` | Урду | `ur_ur`, `ur_lat` | Арабское письмо / Латиница |
+| `uz` | Узбекский | `uz_lat`, `uz_cyr` | Латиница / Кириллица |
+
+Итого: **21 выходной код** (27 меток в датасете, 6 групп объединяются).
+
+---
+
+## Что ещё нужно проекту
+
+- [ ] **Переобучить модели** — после появления нового датасета все `output/*.bin` и `output/sensitive_classifiers/*.pkl` устарели. Запустить полный pipeline (шаги 1–7).
+- [ ] **Подобрать новый threshold** — после переобучения fastText запустить `threshold_finder` и обновить `detector.py`.
+- [ ] **Оценить качество** `hy_lat` и `ka_lat` — латинские транскрипции армянского и грузинского нетипичны; если accuracy ниже 90%, рассмотреть повышение числа эпох или n-gram диапазона в fastText.
+- [ ] **Добавить детектор скрипта для `ne_nep`** — деванагари уникален, но shared с `hi`. В `script_detector.py` можно добавить быстрый путь для Devanagari → отправлять в `UrHiClassifier` вместо fastText.
+- [ ] **Расширить SensitiveRouter** — пара `hy_lat` vs `az` (латиница) может смешиваться; рассмотреть добавление LogReg-классификатора для этого случая.
+- [ ] **Тест-бенчмарк на производственных данных** — реальные чаты поддержки могут иметь иное распределение длин и ошибок, чем учебный датасет.
 
 ---
 
@@ -372,35 +431,48 @@ tar -czf lang_detection_v1.tar.gz \
 
 ```
 lang_detection/
+├── data/                          # сырые источники данных по языкам
+│   ├── armenian_dataset.xlsx
+│   ├── georgian_dataset.xlsx
+│   └── nepali_dataset.xlsx
 ├── benchmarks/
-│   ├── benchmark_speed.py        # замер скорости (fastText + полный пайплайн)
+│   ├── benchmark_speed.py         # замер скорости (fastText + полный пайплайн)
 │   └── compare_models.py
 ├── scripts/
-│   ├── data_processing/
+│   ├── dataset_collection/        # скрипты сбора и подготовки сырых данных
+│   │   ├── armenian_dataset_to_xlsx.py
+│   │   ├── georgian_dataset_to_xlsx.py
+│   │   └── nepali_dataset_to_xlsx.py
+│   ├── data_processing/           # обработка собранного датасета
 │   │   ├── analyze_dataset.py
-│   │   ├── preprocess_text.py    # очистка + normalize_for_detection
-│   │   └── split_dataset.py      # 70/15/15 → train/val/test
+│   │   ├── clean_dataset.py       # удаление редких классов (в новом датасете не нужен)
+│   │   ├── preprocess_text.py     # очистка + normalize_for_detection
+│   │   └── split_dataset.py       # 70/15/15 → train/val/test
 │   ├── detection/
-│   │   ├── detector.py           # LanguageDetector — точка входа
-│   │   ├── script_detector.py    # уникальные алфавиты → быстрый путь
-│   │   ├── sensitive_router.py   # роутер чувствительных пар
+│   │   ├── detector.py            # LanguageDetector — точка входа
+│   │   ├── script_detector.py     # уникальные алфавиты → быстрый путь
+│   │   ├── sensitive_router.py    # роутер чувствительных пар
 │   │   └── sensitive_classifiers/
-│   │       ├── base.py           # char n-gram TF-IDF + LogReg
-│   │       ├── ar_fa.py          # арабский / персидский
-│   │       ├── ru_uk.py          # русский / украинский
-│   │       ├── hy_az.py          # армянский / азербайджанский
-│   │       ├── he_ar.py          # иврит / арабский
-│   │       └── ur_hi.py          # урду / хинди
+│   │       ├── base.py            # char n-gram TF-IDF + LogReg
+│   │       ├── ar_fa.py           # арабский / персидский
+│   │       ├── ru_uk.py           # русский / украинский
+│   │       ├── hy_az.py           # армянский / азербайджанский
+│   │       ├── he_ar.py           # иврит / арабский
+│   │       └── ur_hi.py           # урду / хинди
+│   ├── diagnostic/                # диагностика датасета
+│   │   ├── check_data_loss.py
+│   │   └── verify_dataset.py
 │   ├── training/
 │   │   ├── train_fasttext.py
 │   │   ├── find_optimal_epochs.py
-│   │   └── train_sensitive_classifiers.py
+│   │   ├── train_sensitive_classifiers.py
+│   │   ├── find_threshold.py      # docker-compose run --rm threshold_finder
+│   │   └── evaluate_final.py      # docker-compose run --rm evaluator
 │   └── utils/
-│       ├── label_mapping.py               # uz_lat/uz_cyr→uz, sr_lat/sr_cyr→sr
-│       └── predict_with_threshold.py      # LanguageDetectorWithThreshold
-│                                          # + find_optimal_threshold()
+│       ├── label_mapping.py       # hy_arm/hy_lat→hy, ka_lat→ka, uz_lat/uz_cyr→uz, …
+│       └── predict_with_threshold.py
 ├── output/                        # создаётся автоматически
-├── lang_detection_hackathon.csv
+├── lang_detection_diploma.csv    # финальный датасет (вход пайплайна)
 ├── docker-compose.yml
 ├── Dockerfile
 └── requirements.txt
@@ -413,5 +485,5 @@ lang_detection/
 ```
 Python 3.11+  ·  Docker  ·  Docker Compose
 pandas>=2.0.0  ·  scikit-learn>=1.3.0  ·  fasttext>=0.9.2
-numpy<2.0.0  ·  joblib>=1.2.0
+numpy<2.0.0  ·  joblib>=1.2.0  ·  openpyxl>=3.1.0
 ```
