@@ -105,3 +105,58 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
     command: python benchmarks/compare_models.py
+
+  baseline_trainer:
+    build: .
+    container_name: lang_detection_baseline_trainer
+    volumes:
+      - ./output:/app/output
+      - ./scripts:/app/scripts:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: python scripts/training/train_baseline_fasttext.py
+
+  param_searcher:
+    build: .
+    container_name: lang_detection_param_searcher
+    volumes:
+      - ./output:/app/output
+      - ./scripts:/app/scripts:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: python -m scripts.training.find_optimal_params
+
+  comparer_solutions:
+    build: .
+    container_name: lang_detection_comparer_solutions
+    volumes:
+      - ./output:/app/output
+      - ./benchmarks:/app/benchmarks:ro
+      - ./scripts:/app/scripts:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: python benchmarks/compare_solutions.py
+
+  eval_real:
+    build: .
+    container_name: lang_detection_eval_real
+    volumes:
+      - ./output:/app/output
+      - ./benchmarks:/app/benchmarks:ro
+      - ./scripts:/app/scripts:ro
+      - ./real_data.csv:/app/real_data.csv:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: python benchmarks/eval_real_data.py
+
+  collect_errors:
+    build: .
+    container_name: lang_detection_collect_errors
+    volumes:
+      - ./output:/app/output
+      - ./benchmarks:/app/benchmarks:ro
+      - ./scripts:/app/scripts:ro
+      - ./real_data.csv:/app/real_data.csv:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: python benchmarks/collect_errors.py

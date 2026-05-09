@@ -343,14 +343,16 @@ def main():
     print(f"\nЗагрузка тестовых данных: {test_file}")
     
     try:
-        with open(test_file, 'r', encoding='utf-8', errors='replace') as f:
-            header_line = f.readline().strip()
-            headers = [h.strip('\ufeff') for h in header_line.split(';')]
-        
-        df = pd.read_csv(test_file, sep=';', skiprows=[0, 1], encoding='utf-8',
-                        on_bad_lines='skip', names=headers, engine='python')
-    except:
-        df = pd.read_csv(test_file, sep=';')
+        df = pd.read_csv(test_file, sep=';', encoding='utf-8', on_bad_lines='skip')
+    except UnicodeDecodeError:
+        for enc in ('utf-8-sig', 'cp1251', 'latin-1'):
+            try:
+                df = pd.read_csv(test_file, sep=';', encoding=enc, on_bad_lines='skip')
+                break
+            except Exception:
+                continue
+        else:
+            df = pd.read_csv(test_file, sep=';')
     
     texts = df['request_text'].dropna().astype(str).tolist()
     # Очищаем тексты от символов новой строки (fastText требование)

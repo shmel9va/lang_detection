@@ -148,44 +148,21 @@ def preprocess_dataset(
     """
     print("Загрузка train выборки...")
     
-    # Определяем формат файла по расширению
-    if train_file.endswith('.csv'):
+    df = None
+    for encoding in ('utf-8', 'utf-8-sig', 'cp1251', 'latin-1'):
         try:
-            # Пробуем разные кодировки
-            encodings = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1251', 'iso-8859-1']
-            df = None
-            
-            for encoding in encodings:
-                try:
-                    # Читаем первую строку для получения заголовков
-                    with open(train_file, 'r', encoding=encoding, errors='replace') as f:
-                        header_line = f.readline().strip()
-                        headers = header_line.split(';')
-                    
-                    # Читаем данные, пропуская первую строку (заголовки) и вторую (типы данных)
-                    df = pd.read_csv(train_file, sep=';', skiprows=[0, 1], encoding=encoding, on_bad_lines='skip', names=headers)
-                    break
-                except UnicodeDecodeError:
-                    continue
-                except Exception as e:
-                    continue
-            
-            if df is None:
-                # Последняя попытка с обработкой ошибок
-                with open(train_file, 'r', encoding='utf-8-sig', errors='replace') as f:
-                    header_line = f.readline().strip()
-                    headers = [h.strip('\ufeff') for h in header_line.split(';')]  # Убираем BOM
-                df = pd.read_csv(train_file, sep=';', skiprows=[0, 1], encoding='utf-8', on_bad_lines='skip', names=headers, engine='python')
-        except Exception as e:
-            print(f"Ошибка при чтении CSV файла: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
-    else:
+            df = pd.read_csv(train_file, sep=';', encoding=encoding, on_bad_lines='skip')
+            print(f"  Файл загружен с кодировкой: {encoding}")
+            break
+        except (UnicodeDecodeError, Exception):
+            continue
+    
+    if df is None:
         try:
             df = pd.read_excel(train_file)
+            print(f"  Файл загружен как Excel")
         except Exception as e:
-            print(f"Ошибка при чтении Excel файла: {e}")
+            print(f"Ошибка при чтении файла: {e}")
             return None
     
     print(f"Загружено записей: {len(df)}")

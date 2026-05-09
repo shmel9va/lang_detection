@@ -51,6 +51,11 @@ _CLASSIFIER_CLASSES: Dict[str, type] = {
 }
 
 
+# Порог уверенности fastText, при котором нет смысла переключаться на бинарный классификатор.
+# Если fastText уверен > FASTTEXT_CONFIDENCE_KEEP, оставляем его результат.
+FASTTEXT_CONFIDENCE_KEEP = 0.90
+
+
 class SensitiveRouter:
     """
     Роутер чувствительных языковых пар.
@@ -74,17 +79,13 @@ class SensitiveRouter:
         text: str,
         top2_langs: List[str],
         top2_probs: List[float],
-    ) -> Tuple[str, float]:
+    ) -> Optional[Tuple[str, float]]:
         """
         Определить язык с учётом чувствительных пар.
 
-        Args:
-            text:        оригинальный нормализованный текст (после normalize_for_detection).
-            top2_langs:  список из ≤2 языков от fastText (уже прошедших merge_label).
-            top2_probs:  вероятности от fastText для top2_langs.
-
         Returns:
-            (iso_code, confidence)
+            (iso_code, confidence) или None — если бинарный классификатор
+            не обучен и быстрый путь не сработал (caller должен использовать fastText).
         """
         if not top2_langs:
             return "other", 0.0
@@ -95,18 +96,22 @@ class SensitiveRouter:
         if len(top2_langs) < 2:
             return best_lang, best_prob
 
-        pair = frozenset({top2_langs[0], top2_langs[1]})
-
-        if pair not in SENSITIVE_PAIRS:
+        if best_prob >= FASTTEXT_CONFIDENCE_KEEP:
             return best_lang, best_prob
 
-        clf_name = SENSITIVE_PAIRS[pair]
-        clf = self.classifiers.get(clf_name)
+        lang1, lang2 = top2_langs[0], top2_langs[1]
 
-        if clf is None:
+        pair = frozenset({lang1, lang2})
+        if pair in SENSITIVE_PAIRS:
+            clf_name = SENSITIVE_PAIRS[pair]
+            clf = self.classifiers.get(clf_name)
+            if clf is not None:
+                result = clf.predict(text)
+                if result is not None:
+                    return result
             return best_lang, best_prob
 
-        return clf.predict(text)
+        return best_lang, best_prob
 
     def is_sensitive_pair(self, lang1: str, lang2: str) -> bool:
         return frozenset({lang1, lang2}) in SENSITIVE_PAIRS

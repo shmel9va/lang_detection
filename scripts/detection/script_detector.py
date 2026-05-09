@@ -4,43 +4,51 @@
 Возвращает результат немедленно для языков с уникальными алфавитами,
 не обращаясь к ML-модели. Это самый быстрый уровень в пайплайне.
 
-Уникальные алфавиты (нет перекрытий с другими поддерживаемыми языками):
-  hy  — армянский      (U+0531–U+0587)
-  ka  — грузинский     (U+10A0–U+10FF, U+2D00–U+2D2F)
-  he  — иврит          (U+05D0–U+05EA, U+FB1D–U+FB4F)
-  am  — амхарский      (U+1200–U+137F)
+Поддерживаемые языки (уникальный скрипт → немедленный ответ):
+  hy    — армянский      (U+0531–U+0587)
+  ka    — грузинский     (U+10A0–U+10FF, U+2D00–U+2D2F)
+  he    — иврит          (U+05D0–U+05EA, U+FB1D–U+FB4F)
+  am    — амхарский      (U+1200–U+137F)
+
+Неподдерживаемые скрипты → other (немедленный ответ):
+  CJK / Hiragana / Katakana → other  (японский, китайский)
+  Hangul                       → other  (корейский)
 
 Неоднозначные алфавиты (передаются в fastText):
-  латиница   — en, tr, az, uz_lat, sr_lat, ro, es, fr, pt, ...
-  кириллица  — ru, uk, kk, uz_cyr, sr_cyr, ...
+  латиница   — en, tr, az, uz_lat, sr_lat, ro, es, fr, pt, de, it, nl, pl, vi, ...
+  кириллица  — ru, uk, kk, uz_cyr, sr_cyr, bg, ...
   арабское   — ar, fa, ur, ...
   деванагари — hi, ne, ...
 """
 
 from typing import Optional, Tuple
 
-# Диапазоны Unicode для уникальных алфавитов.
-# Формат: { iso_639_1: [(start, end), ...] }
 UNIQUE_SCRIPT_RANGES: dict[str, list[tuple[int, int]]] = {
-    "hy": [  # Армянский
-        (0x0531, 0x0587),  # прописные (U+0531–U+0556) + строчные (U+0561–U+0587)
+    "hy": [
+        (0x0531, 0x0587),
     ],
-    "ka": [  # Грузинский
-        (0x10A0, 0x10FF),  # основной блок
-        (0x2D00, 0x2D2F),  # Mkhedruli supplement
+    "ka": [
+        (0x10A0, 0x10FF),
+        (0x2D00, 0x2D2F),
     ],
-    "he": [  # Иврит
-        (0x05D0, 0x05EA),  # еврейские буквы
-        (0xFB1D, 0xFB4F),  # презентационные формы-A
+    "he": [
+        (0x05D0, 0x05EA),
+        (0xFB1D, 0xFB4F),
     ],
-    "am": [  # Амхарский (эфиопский силлабарий)
+    "am": [
         (0x1200, 0x137F),
     ],
 }
 
-# Минимальное количество символов уникального скрипта для уверенного ответа
-_MIN_COUNT = 1
-# Минимальная доля символов уникального скрипта от всех букв текста
+_OTHER_SCRIPT_RANGES: list[tuple[int, int]] = [
+    (0x3040, 0x309F),   # Hiragana
+    (0x30A0, 0x30FF),   # Katakana
+    (0x4E00, 0x9FFF),   # CJK Unified Ideographs
+    (0xAC00, 0xD7AF),   # Hangul Syllables (корейский)
+    (0x1100, 0x11FF),   # Hangul Jamo
+    (0x3130, 0x318F),   # Hangul Compatibility Jamo
+]
+
 _MIN_RATIO = 0.30
 
 
@@ -57,16 +65,6 @@ class ScriptDetector:
     """
 
     def detect(self, text: str) -> Optional[Tuple[str, float]]:
-        """
-        Попытка определить язык по уникальному скрипту.
-
-        Args:
-            text: текст после normalize_for_detection (NFKC, без URL/эмодзи).
-
-        Returns:
-            (iso_code, confidence) если язык однозначно определён,
-            None если скрипт неоднозначен — текст нужно передать в fastText.
-        """
         if not text:
             return None
 
@@ -81,6 +79,12 @@ class ScriptDetector:
             ratio = count / total_letters
             if total_letters <= 5 or ratio >= _MIN_RATIO:
                 return lang, 0.99
+
+        other_count = _count_in_ranges(text, _OTHER_SCRIPT_RANGES)
+        if other_count > 0:
+            ratio = other_count / total_letters
+            if total_letters <= 5 or ratio >= _MIN_RATIO:
+                return "other", 0.99
 
         return None
 

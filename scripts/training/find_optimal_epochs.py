@@ -13,6 +13,7 @@ import os
 import fasttext
 import pandas as pd
 from scripts.utils.label_mapping import merge_label
+from scripts.data_processing.preprocess_text import preprocess_text
 
 STEP_EPOCHS = 5        # шаг: 5, 10, 15 ...
 MAX_EPOCHS  = 70
@@ -71,7 +72,7 @@ def find_optimal_epochs(
     # ── Подготовка val данных ────────────────────────────────────────
     val_df = _read_val(val_file, text_col, label_col)
     val_data = [
-        (str(row[text_col]).replace("\n", " ").replace("\r", " ").strip(),
+        (preprocess_text(str(row[text_col])).replace("\n", " ").replace("\r", " ").strip(),
          merge_label(str(row[label_col])))
         for _, row in val_df.iterrows()
         if str(row[text_col]).strip() and str(row[label_col]).strip()
@@ -95,7 +96,8 @@ def find_optimal_epochs(
     with open(train_txt, "w", encoding="utf-8") as f:
         for _, row in train_df.iterrows():
             label = str(row[label_col]).strip().replace(" ", "_")
-            text  = str(row[text_col]).strip()
+            text  = preprocess_text(str(row[text_col]).strip())
+            text  = text.replace("\n", " ").replace("\r", " ").strip()
             if label and text:
                 f.write(f"__label__{label} {text}\n")
 

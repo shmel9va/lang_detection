@@ -9,13 +9,15 @@
 
 Файл: `lang_detection_diploma.csv`  
 Поля: `request_text`, `result`  
-Размер: **27 меток × 2 500 примеров = 70 000 строк** ( — 5 000, т.к. входит в две чувствительные пары)
+Размер: **35 меток: 27 × 2500 + 8 × 300 = 69 900 строк**
+
+### Поддерживаемые языки (21 + other)
 
 | Метка | Язык | Группа |
 |-------|------|--------|
 | `hy_arm` | Армянский (армянский алфавит) | → `hy` |
 | `hy_lat` | Армянский (латинская транскрипция) | → `hy` |
-| `ka` | Грузинский (грузинский алфавит) | — |
+| `ka_geo` | Грузинский (грузинский алфавит) | → `ka` |
 | `ka_lat` | Грузинский (латинская транскрипция) | → `ka` |
 | `uz_lat` | Узбекский (латиница) | → `uz` |
 | `uz_cyr` | Узбекский (кириллица) | → `uz` |
@@ -41,7 +43,20 @@
 | `tr` | Турецкий | — |
 | `uk` | Украинский | — |
 
-Метки с суффиксами объединяются постпроцессором: `hy_arm`/`hy_lat` → `hy`, `ka_lat` → `ka` и т.д.
+### Неподдерживаемые языки → `other` (×300)
+
+| Метка | Язык | Почему добавлен |
+|-------|------|-----------------|
+| `de` | Немецкий | Путается с `en`, `nl` |
+| `it` | Итальянский | Путается с `es`, `pt` |
+| `nl` | Нидерландский | Путается с `en`, `de` |
+| `pl` | Польский | Путается с `ro`, `en` |
+| `bg` | Болгарский | Кириллица — путается с `ru`, `uk` |
+| `ja` | Японский | CJK — быстрый путь |
+| `vi` | Вьетнамский | Латиница с диакритиками |
+| `ko` | Корейский | Hangul — быстрый путь |
+
+Метки объединяются постпроцессором: `hy_arm`/`hy_lat` → `hy`, `ka_geo`/`ka_lat` → `ka`, `de`/`ja`/... → `other`.
 
 ---
 
@@ -61,37 +76,40 @@
 ┌──────────────────────────────────────────────┐
 │ 2. Детектор скрипта           БЫСТРЫЙ ПУТЬ   │
 │    Уникальные алфавиты → немедленный ответ   │
-│      hy_arm (армянский)   ka (грузинский)│
-│      he (иврит)           am (амхарский)     │
+│      hy (армянский)   ka (грузинский)        │
+│      he (иврит)       am (амхарский)         │
+│      CJK/Hangul → other                      │
 └───────────┬──────────────────────────────────┘
-            │ если скрипт неоднозначен
-            ▼
+             │ если скрипт неоднозначен
+             ▼
 ┌──────────────────────────────────────────────┐
 │ 3. fastText                                  │
 │    Топ-2 языка с вероятностями               │
-│    Обучен на всех 27 исходных метках         │
+│    Обучен на 35 исходных метках              │
 │    confidence < threshold → "other"          │
 └───────────┬──────────────────────────────────┘
-            │
-            ▼
+             │
+             ▼
 ┌──────────────────────────────────────────────┐
 │ 4. Роутер чувствительных пар                 │
 │    Если топ-2 — чувствительная пара:         │
 │      hy–az · he–ar · ur–hi                   │
 │      ar–fa  (fast-path: پچژگ → fa)          │
 │      ru–uk  (fast-path: іїєґ → uk)          │
+│    Если confidence ≥ 0.90 → fastText ответ   │
 │    Иначе → результат fastText                │
 └───────────┬──────────────────────────────────┘
-            │
-            ▼
+             │
+             ▼
 ┌──────────────────────────────────────────────┐
 │ 5. Постпроцессор (merge_label)               │
 │    hy_arm / hy_lat → hy                      │
-│    ka_lat → ka                      │
+│    ka_geo / ka_lat → ka                      │
 │    uz_lat / uz_cyr → uz                      │
 │    ur_ur  / ur_lat → ur                      │
 │    ne_nep / ne_lat → ne                      │
 │    sr_lat / sr_cyr → sr                      │
+│    de / it / ja / ko / ... → other           │
 │    → ISO 639-1 код + confidence              │
 └──────────────────────────────────────────────┘
 ```
@@ -146,61 +164,42 @@ docker-compose run --rm splitter
 
 ---
 
-### Шаг 2. Предобработка текста
-
-```bash
-docker-compose run --rm preprocessor
-```
-
-Читает `output/train.csv`, удаляет HTML, нормализует пробелы, применяет lowercase.  
-Результат: `output/train_preprocessed.csv`
-
----
-
-### Шаг 3. Обучение fastText
+### Шаг 2. Обучение fastText
 
 ```bash
 docker-compose run --rm trainer
 ```
 
-Автоматически подбирает число эпох (10–70) через внутренний validation на 15% от train,
-затем обучает итоговую модель на полном train.
+Читает `output/train.csv`, применяет `preprocess_text` один раз, подбирает число эпох на val,
+затем обучает итоговую модель. Шаг `preprocessor` **не нужен** — предобработка встроена в trainer.
 
 Результаты:
 - `output/lang_detection_model.bin`
 - `output/model_evaluation.txt`
-- `output/epoch_validation_results.txt`
 
 **Время:** 5–15 минут.
 
 ---
 
-### Шаг 4. Подбор threshold
+### Шаг 3. Подбор threshold
 
 ```bash
 docker-compose run --rm threshold_finder
 ```
 
-Перебирает пороги [0.3 … 0.9] на `val.csv` и выбирает оптимальный по accuracy.
+Перебирает пороги [0.3 … 0.9] на `val.csv`. Выбирает минимальный порог в пределах 0.5% от лучшего accuracy.
 
-Результаты: `output/threshold_results.txt`  
-Оптимальный порог выводится в stdout — его нужно прописать в `detector.py`:
-```python
-detector = LanguageDetector(..., threshold=<best_threshold>)
-```
+Результаты: `output/threshold_results.txt`
 
 ---
 
-### Шаг 5. Обучение бинарных классификаторов
+### Шаг 4. Обучение бинарных классификаторов
 
 ```bash
 docker-compose run --rm trainer_sensitive
 ```
 
-Для каждой из 5 чувствительных пар (ar–fa, ru–uk, hy–az, he–ar, ur–hi):
-- обучает LogReg на char n-gram из `train.csv`
-- оценивает на `val.csv` (Accuracy / Precision / Recall / F1)
-- все 5 пар имеют данные в новом датасете — `ru_uk.pkl` теперь обучается полноценно
+Тексты нормализуются через `normalize_for_detection` (как в пайплайне).
 
 Результаты: `output/sensitive_classifiers/ar_fa.pkl`, `hy_az.pkl`, `he_ar.pkl`, `ur_hi.pkl`, `ru_uk.pkl`
 
@@ -208,7 +207,7 @@ docker-compose run --rm trainer_sensitive
 
 ---
 
-### Шаг 6. Бенчмарк скорости
+### Шаг 5. Бенчмарк скорости
 
 ```bash
 docker-compose run --rm benchmark
@@ -266,6 +265,8 @@ docker-compose run --rm benchmark
 | `evaluator` | `docker-compose run --rm evaluator` | Финальная оценка на test (один раз) |
 | `analyzer` | `docker-compose run --rm analyzer` | Анализ датасета (опционально) |
 | `comparer` | `docker-compose run --rm comparer` | Сравнение версий моделей |
+| `baseline_trainer` | `docker-compose run --rm baseline_trainer` | Обучение baseline fastText (21 класс) |
+| `comparer_solutions` | `docker-compose run --rm comparer_solutions` | Сравнение baseline vs combined |
 
 ---
 
@@ -400,7 +401,7 @@ tar -czf lang_detection_v1.tar.gz \
 | `he` | Иврит | `he` | Иврит (быстрый путь) |
 | `hi` | Хинди | `hi` | Деванагари |
 | `hy` | Армянский | `hy_arm`, `hy_lat` | Армянский / Латиница |
-| `ka` | Грузинский | `ka`, `ka_lat` | Грузинский / Латиница |
+| `ka` | Грузинский | `ka_geo`, `ka_lat` | Грузинский / Латиница |
 | `kk` | Казахский | `kk` | Кириллица |
 | `ne` | Непальский | `ne_nep`, `ne_lat` | Деванагари / Латиница |
 | `pt` | Португальский | `pt` | Латиница |
@@ -411,19 +412,71 @@ tar -czf lang_detection_v1.tar.gz \
 | `uk` | Украинский | `uk` | Кириллица |
 | `ur` | Урду | `ur_ur`, `ur_lat` | Арабское письмо / Латиница |
 | `uz` | Узбекский | `uz_lat`, `uz_cyr` | Латиница / Кириллица |
+| `other` | Неподдерживаемые | `de`, `it`, `nl`, `pl`, `bg`, `ja`, `vi`, `ko` | CJK/Hangul → быстрый путь |
 
-Итого: **21 выходной код** (27 меток в датасете, 6 групп объединяются).
+Итого: **22 выходных кода** (35 меток в датасете, 14 групп объединяются).
+
+---
+
+## Исправленные ошибки
+
+| # | Статус | Исправление |
+|---|--------|-------------|
+| 1 | **Исправлено** | `train_fasttext.py` — оценка только на val.csv, test не трогается |
+| 2 | **Исправлено** | `preprocess_text.py` — убран `skiprows=[0,1]`, нормальное чтение CSV |
+| 3 | **Исправлено** | `train_fasttext.py` — реальные параметры (epoch, dim, loss) в отчёте |
+| 4 | **Исправлено** | `predict_with_threshold.py` — модель загружается 1 раз, перебираются только пороги |
+| 5 | **Исправлено** | `predict_with_threshold.py` — добавлены `normalize_for_detection` + `preprocess_text` |
+| 6 | **Исправлено** | `sensitive_router.py` — при `probs[0] >= 0.90` fastText не переопределяется |
+| 7 | **Исправлено** | Добавлены 8 языков (de/it/nl/pl/bg/ja/vi/ko) → `other`, script_detector для CJK/Hangul |
+| 8 | **Исправлено** | `train_fasttext.py` — `preprocess_text` применяется всегда |
+| 9 | **Исправлено** | `benchmark_speed.py` — убран `skiprows=[0,1]` |
+| 10 | **Исправлено** | `base.py` — необученный классификатор возвращает `None` → fallback на fastText |
+| 11 | **Исправлено** | `_pick_threshold` — выбирает порог с лучшим accuracy (минимальный в пределах 0.5%) |
+| 12 | **Исправлено** | `train_fasttext.py` — читает `train.csv` напрямую, preprocess_text 1 раз (не 2) |
+| 13 | **Исправлено** | `find_optimal_epochs.py` — добавлена preprocess_text для train и val |
+| 14 | **Исправлено** | `sensitive_router.py` — если top1 входит в чувствительную пару (но top2 нет) — прогоняет через LogReg |
+| 15 | **Исправлено** | `train_sensitive_classifiers.py` — тексты нормализуются через `normalize_for_detection` |
+| 16 | **Исправлено** | `base.py` — `evaluate` не падает если predict вернул None |
+
+---
+
+## Базовая модель (baseline)
+
+Простой fastText на 21 объединённом классе. Без бинарных классификаторов, детектора скрипта и роутера.
+
+```bash
+docker-compose run --rm splitter           # шаг 1 — разделение данных
+docker-compose run --rm baseline_trainer   # обучение baseline
+```
+
+Результат: `output/baseline_model.bin`, `output/baseline_evaluation.txt`
+
+---
+
+## Сравнение моделей
+
+Сравнение базовой и комбинированной моделей на `test.csv`:
+
+```bash
+docker-compose run --rm comparer_solutions
+```
+
+Выводит: accuracy, macro F1, ошибки по чувствительным парам, скорость.
+
+Результат: `output/solutions_comparison.txt`
 
 ---
 
 ## Что ещё нужно проекту
 
-- [ ] **Переобучить модели** — после появления нового датасета все `output/*.bin` и `output/sensitive_classifiers/*.pkl` устарели. Запустить полный pipeline (шаги 1–7).
-- [ ] **Подобрать новый threshold** — после переобучения fastText запустить `threshold_finder` и обновить `detector.py`.
-- [ ] **Оценить качество** `hy_lat` и `ka_lat` — латинские транскрипции армянского и грузинского нетипичны; если accuracy ниже 90%, рассмотреть повышение числа эпох или n-gram диапазона в fastText.
-- [ ] **Добавить детектор скрипта для `ne_nep`** — деванагари уникален, но shared с `hi`. В `script_detector.py` можно добавить быстрый путь для Devanagari → отправлять в `UrHiClassifier` вместо fastText.
-- [ ] **Расширить SensitiveRouter** — пара `hy_lat` vs `az` (латиница) может смешиваться; рассмотреть добавление LogReg-классификатора для этого случая.
-- [ ] **Тест-бенчмарк на производственных данных** — реальные чаты поддержки могут иметь иное распределение длин и ошибок, чем учебный датасет.
+- [x] **Базовая модель** — `train_baseline_fasttext.py`
+- [x] **Скрипт сравнения** — `compare_solutions.py`
+- [x] **Исправить ошибки #1–#10** — все 10 исправлены
+- [x] **Класс «other»** — 8 языков × 300 примеров, CJK/Hangul в script_detector
+- [ ] **Переобучить обе модели** — `docker-compose build` → полный pipeline
+- [ ] **Подобрать threshold** — `docker-compose run --rm threshold_finder`
+- [ ] **Сравнить модели** — `docker-compose run --rm comparer_solutions`
 
 ---
 
@@ -437,7 +490,8 @@ lang_detection/
 │   └── nepali_dataset.xlsx
 ├── benchmarks/
 │   ├── benchmark_speed.py         # замер скорости (fastText + полный пайплайн)
-│   └── compare_models.py
+│   ├── compare_models.py
+│   └── compare_solutions.py       # сравнение baseline vs combined
 ├── scripts/
 │   ├── dataset_collection/        # скрипты сбора и подготовки сырых данных
 │   │   ├── armenian_dataset_to_xlsx.py
@@ -464,6 +518,7 @@ lang_detection/
 │   │   └── verify_dataset.py
 │   ├── training/
 │   │   ├── train_fasttext.py
+│   │   ├── train_baseline_fasttext.py  # baseline: 21 класс, без роутера
 │   │   ├── find_optimal_epochs.py
 │   │   ├── train_sensitive_classifiers.py
 │   │   ├── find_threshold.py      # docker-compose run --rm threshold_finder

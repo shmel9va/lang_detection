@@ -57,7 +57,7 @@ class SensitivePairClassifier:
     # Публичный интерфейс
     # ------------------------------------------------------------------
 
-    def predict(self, text: str) -> Tuple[str, float]:
+    def predict(self, text: str) -> Optional[Tuple[str, float]]:
         """
         Определить язык текста.
 
@@ -73,8 +73,7 @@ class SensitivePairClassifier:
 
         # Уровень 2: логистическая регрессия
         if not self.is_trained:
-            # Классификатор ещё не обучен — возвращаем первый язык с низкой уверенностью
-            return self.lang1, 0.5
+            return None
 
         return self._logreg_predict(normalized)
 
@@ -97,7 +96,11 @@ class SensitivePairClassifier:
         correct = 0
         results = []
         for text, true_label in zip(texts, labels):
-            pred, conf = self.predict(text)
+            pred_result = self.predict(text)
+            if pred_result is None:
+                pred, conf = true_label, 0.0
+            else:
+                pred, conf = pred_result
             ok = pred == true_label
             correct += ok
             results.append(

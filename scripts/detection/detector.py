@@ -43,7 +43,7 @@ class LanguageDetector:
         self,
         fasttext_model_path: str = "output/lang_detection_model.bin",
         sensitive_classifiers_dir: str = "output/sensitive_classifiers",
-        threshold: float = 0.5,
+        threshold: float = 0.0,
         router_verbose: bool = True,
     ):
         self.threshold = threshold
@@ -99,8 +99,10 @@ class LanguageDetector:
             return "other", probs_list[0]
 
         # ── Уровень 4: роутер чувствительных пар ────────────────────
-        lang, conf = self.router.route(normalized, langs, probs_list)
-        return lang, conf
+        result = self.router.route(normalized, langs, probs_list)
+        if result is not None:
+            return result
+        return langs[0], probs_list[0]
 
     def detect_batch(self, texts: List[str]) -> List[Tuple[str, float]]:
         """Определить язык для списка текстов."""

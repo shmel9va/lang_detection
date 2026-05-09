@@ -29,6 +29,7 @@ from scripts.detection.sensitive_classifiers.hy_az import HyAzClassifier
 from scripts.detection.sensitive_classifiers.ru_uk import RuUkClassifier
 from scripts.detection.sensitive_classifiers.ur_hi import UrHiClassifier
 from scripts.utils.label_mapping import merge_label
+from scripts.data_processing.preprocess_text import normalize_for_detection
 
 # Список пар для обучения: (lang1, lang2, класс классификатора)
 PAIRS: List[Tuple[str, str, Type[SensitivePairClassifier]]] = [
@@ -70,7 +71,7 @@ def _prepare_pair_data(
     mask = df["_merged"].isin([lang1, lang2])
     pair_df = df[mask].dropna(subset=[text_col, label_col]).copy()
 
-    texts = pair_df[text_col].astype(str).tolist()
+    texts = pair_df[text_col].astype(str).apply(normalize_for_detection).tolist()
     labels = pair_df["_merged"].tolist()
     return texts, labels
 

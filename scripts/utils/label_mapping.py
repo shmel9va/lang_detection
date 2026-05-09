@@ -10,6 +10,7 @@ LABEL_MAPPING = {
     'hy_arm': 'hy',
     'hy_lat': 'hy',
     # Грузинский: грузинский скрипт и латинская транскрипция
+    'ka_geo': 'ka',
     'ka_lat': 'ka',
     # Узбекский: латиница и кириллица
     'uz_lat': 'uz',
@@ -23,6 +24,15 @@ LABEL_MAPPING = {
     # Сербский: кириллица и латиница
     'sr_cyr': 'sr',
     'sr_lat': 'sr',
+    # Неподдерживаемые языки → other
+    'de': 'other',
+    'it': 'other',
+    'nl': 'other',
+    'pl': 'other',
+    'bg': 'other',
+    'ja': 'other',
+    'vi': 'other',
+    'ko': 'other',
 }
 
 def merge_label(label):
