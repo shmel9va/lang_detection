@@ -21,6 +21,15 @@ output/*.bin
 output/*.txt
 output/*.csv
 output/*.xlsx
+output/*.onnx
+output/*.onnx.data
+output/*.pkl
+output/distilbert_lang_detection/
+output/distilbert_search/
+
+data/*.xlsx
+
+*.csv
 
 .dockerignore
 
