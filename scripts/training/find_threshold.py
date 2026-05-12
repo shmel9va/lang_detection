@@ -56,7 +56,12 @@ def main() -> None:
             print("Сначала запустите: splitter → trainer.")
             return
 
-    df = pd.read_csv(VAL_PATH, sep=";")
+    for enc in ("utf-8", "utf-8-sig", "cp1251", "latin-1"):
+        try:
+            df = pd.read_csv(VAL_PATH, sep=";", encoding=enc, on_bad_lines="skip")
+            break
+        except (UnicodeDecodeError, Exception):
+            continue
     val_data = list(zip(
         df["request_text"].astype(str),
         df["result"].apply(merge_label).astype(str),

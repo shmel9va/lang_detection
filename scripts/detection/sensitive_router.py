@@ -23,7 +23,6 @@ from scripts.detection.sensitive_classifiers.ru_uk import RuUkClassifier
 from scripts.detection.sensitive_classifiers.ur_hi import UrHiClassifier
 from scripts.detection.sensitive_classifiers.base import SensitivePairClassifier
 
-# Таблица чувствительных пар: frozenset → имя классификатора
 SENSITIVE_PAIRS: Dict[frozenset, str] = {
     frozenset({"hy", "az"}): "hy_az",
     frozenset({"he", "ar"}): "he_ar",
@@ -32,7 +31,6 @@ SENSITIVE_PAIRS: Dict[frozenset, str] = {
     frozenset({"ru", "uk"}): "ru_uk",
 }
 
-# Имя файла pkl для каждого классификатора
 _PKL_FILES: Dict[str, str] = {
     "hy_az": "hy_az.pkl",
     "he_ar": "he_ar.pkl",
@@ -41,7 +39,6 @@ _PKL_FILES: Dict[str, str] = {
     "ru_uk": "ru_uk.pkl",
 }
 
-# Класс для каждого классификатора (для создания необученного экземпляра)
 _CLASSIFIER_CLASSES: Dict[str, type] = {
     "hy_az": HyAzClassifier,
     "he_ar": HeArClassifier,
@@ -53,7 +50,7 @@ _CLASSIFIER_CLASSES: Dict[str, type] = {
 
 # Порог уверенности fastText, при котором нет смысла переключаться на бинарный классификатор.
 # Если fastText уверен > FASTTEXT_CONFIDENCE_KEEP, оставляем его результат.
-FASTTEXT_CONFIDENCE_KEEP = 0.90
+FASTTEXT_CONFIDENCE_KEEP = 0.95
 
 
 class SensitiveRouter:
@@ -96,12 +93,9 @@ class SensitiveRouter:
         if len(top2_langs) < 2:
             return best_lang, best_prob
 
-        if best_prob >= FASTTEXT_CONFIDENCE_KEEP:
-            return best_lang, best_prob
-
         lang1, lang2 = top2_langs[0], top2_langs[1]
-
         pair = frozenset({lang1, lang2})
+
         if pair in SENSITIVE_PAIRS:
             clf_name = SENSITIVE_PAIRS[pair]
             clf = self.classifiers.get(clf_name)
@@ -109,6 +103,9 @@ class SensitiveRouter:
                 result = clf.predict(text)
                 if result is not None:
                     return result
+            return best_lang, best_prob
+
+        if best_prob >= FASTTEXT_CONFIDENCE_KEEP:
             return best_lang, best_prob
 
         return best_lang, best_prob

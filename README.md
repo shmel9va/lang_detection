@@ -1,117 +1,58 @@
-# Комбинированная модель определения языка
+# Комбинированная модель идентификации языка текста
 
-Модель для определения языка текста в чатах поддержки такси.  
-Целевой тайминг: ≤ 30 мс на одну классификацию.
+Модель для определения языка текста в чатах поддержки международных компаний.  
+Устойчива к нестандартному пользовательскому вводу: опечатки, транслитерация,  
+смешение алфавитов, короткие сообщения.
 
----
-
-## Датасет
-
-Файл: `lang_detection_diploma.csv`  
-Поля: `request_text`, `result`  
-Размер: **35 меток: 27 × 2500 + 8 × 300 = 69 900 строк**
-
-### Поддерживаемые языки (21 + other)
-
-| Метка | Язык | Группа |
-|-------|------|--------|
-| `hy_arm` | Армянский (армянский алфавит) | → `hy` |
-| `hy_lat` | Армянский (латинская транскрипция) | → `hy` |
-| `ka_geo` | Грузинский (грузинский алфавит) | → `ka` |
-| `ka_lat` | Грузинский (латинская транскрипция) | → `ka` |
-| `uz_lat` | Узбекский (латиница) | → `uz` |
-| `uz_cyr` | Узбекский (кириллица) | → `uz` |
-| `ur_ur` | Урду (арабский скрипт / насталик) | → `ur` |
-| `ur_lat` | Урду (латинская транскрипция) | → `ur` |
-| `ne_nep` | Непальский (деванагари) | → `ne` |
-| `ne_lat` | Непальский (латинская транскрипция) | → `ne` |
-| `sr_cyr` | Сербский (кириллица) | → `sr` |
-| `sr_lat` | Сербский (латиница) | → `sr` |
-| `he` | Иврит | — |
-| `ar` | Арабский | — |
-| `am` | Амхарский | — |
-| `az` | Азербайджанский | — |
-| `en` | Английский | — |
-| `es` | Испанский | — |
-| `fa` | Персидский | — |
-| `fr` | Французский | — |
-| `hi` | Хинди | — |
-| `kk` | Казахский | — |
-| `pt` | Португальский | — |
-| `ro` | Румынский | — |
-| `ru` | Русский | — |
-| `tr` | Турецкий | — |
-| `uk` | Украинский | — |
-
-### Неподдерживаемые языки → `other` (×300)
-
-| Метка | Язык | Почему добавлен |
-|-------|------|-----------------|
-| `de` | Немецкий | Путается с `en`, `nl` |
-| `it` | Итальянский | Путается с `es`, `pt` |
-| `nl` | Нидерландский | Путается с `en`, `de` |
-| `pl` | Польский | Путается с `ro`, `en` |
-| `bg` | Болгарский | Кириллица — путается с `ru`, `uk` |
-| `ja` | Японский | CJK — быстрый путь |
-| `vi` | Вьетнамский | Латиница с диакритиками |
-| `ko` | Корейский | Hangul — быстрый путь |
-
-Метки объединяются постпроцессором: `hy_arm`/`hy_lat` → `hy`, `ka_geo`/`ka_lat` → `ka`, `de`/`ja`/... → `other`.
+Целевой тайминг: **≤ 30 мс** на классификацию.  
+Целевое качество: **macro F1 ≥ 85%** на реальных данных (с ошибками, короткие тексты,  
+транслитерация).
 
 ---
 
-## Архитектура
+## Архитектура (fastText + Transformer fallback + Binary classifiers)
 
 ```
 Входной текст
      │
      ▼
-┌──────────────────────────────────────────────┐
-│ 1. Препроцессор                              │
-│    NFKC-нормализация · удаление URL/         │
-│    телефонов / эмодзи                        │
-└──────────────────────┬───────────────────────┘
-                       │
-                       ▼
-┌──────────────────────────────────────────────┐
-│ 2. Детектор скрипта           БЫСТРЫЙ ПУТЬ   │
-│    Уникальные алфавиты → немедленный ответ   │
-│      hy (армянский)   ka (грузинский)        │
-│      he (иврит)       am (амхарский)         │
-│      CJK/Hangul → other                      │
-└───────────┬──────────────────────────────────┘
-             │ если скрипт неоднозначен
-             ▼
-┌──────────────────────────────────────────────┐
-│ 3. fastText                                  │
-│    Топ-2 языка с вероятностями               │
-│    Обучен на 35 исходных метках              │
-│    confidence < threshold → "other"          │
-└───────────┬──────────────────────────────────┘
-             │
-             ▼
-┌──────────────────────────────────────────────┐
-│ 4. Роутер чувствительных пар                 │
-│    Если топ-2 — чувствительная пара:         │
-│      hy–az · he–ar · ur–hi                   │
-│      ar–fa  (fast-path: پچژگ → fa)          │
-│      ru–uk  (fast-path: іїєґ → uk)          │
-│    Если confidence ≥ 0.90 → fastText ответ   │
-│    Иначе → результат fastText                │
-└───────────┬──────────────────────────────────┘
-             │
-             ▼
-┌──────────────────────────────────────────────┐
-│ 5. Постпроцессор (merge_label)               │
-│    hy_arm / hy_lat → hy                      │
-│    ka_geo / ka_lat → ka                      │
-│    uz_lat / uz_cyr → uz                      │
-│    ur_ur  / ur_lat → ur                      │
-│    ne_nep / ne_lat → ne                      │
-│    sr_lat / sr_cyr → sr                      │
-│    de / it / ja / ko / ... → other           │
-│    → ISO 639-1 код + confidence              │
-└──────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│ Level 0: Phrase Dictionary                       │
+│   Точные совпадения частых фраз                  │
+│   Покрытие: ~15% текстов, 0.01 мс               │
+└──────────────┬──────────────────────────────────┘
+               │ нет совпадения
+               ▼
+┌─────────────────────────────────────────────────┐
+│ Level 1: Script Detector                         │
+│   Уникальные алфавиты → немедленный ответ        │
+│   hy (армянский), ka (грузинский), he, am, CJK   │
+│   Покрытие: ~10% текстов, 0.1 мс                │
+└──────────────┬──────────────────────────────────┘
+               │ скрипт неоднозначен (латиница / кириллица)
+               ▼
+┌─────────────────────────────────────────────────┐
+│ Level 2: fastText (обучен на 41 метку)           │
+│   Если confidence ≥ 0.95                         │
+│   И пара НЕ чувствительная → ответ               │
+│   Покрытие: ~50% текстов, 0.05 мс               │
+└──────────────┬──────────────────────────────────┘
+               │ confidence < 0.95 ИЛИ чувствительная пара
+               ▼
+┌─────────────────────────────────────────────────┐
+│ Level 3: DistilBERT (ONNX, 22 класса)            │
+│   Fallback для неоднозначных случаев             │
+│   Покрытие: ~25% текстов, 8–10 мс               │
+└──────────────┬──────────────────────────────────┘
+               │ топ-2 = чувствительная пара
+               ▼
+┌─────────────────────────────────────────────────┐
+│ Level 4: 5 бинарных классификаторов              │
+│   hy-az · he-ar · ur-hi · ar-fa · ru-uk          │
+│   Покрытие: ~5% текстов, 0.5 мс                 │
+└─────────────────────────────────────────────────┘
+
+Среднее: ~2.6 мс   Максимум: ~12 мс   (при инференсе на CPU через ONNX)
 ```
 
 Каждый бинарный классификатор двухуровневый:
@@ -120,32 +61,86 @@
 
 ---
 
-## Разбиение данных
+## Датасет
 
-```
-lang_detection_diploma.csv
-         │  docker-compose run --rm splitter
-         ▼
-  train.csv  70%   ← обучение fastText + LogReg
-  val.csv    15%   ← подбор threshold, оценка LogReg
-  test.csv   15%   ← ФИНАЛЬНАЯ ОЦЕНКА (один раз в самом конце)
-```
+Файл: `lang_detection_diploma.csv`  
+Поля: `request_text`, `result`  
+Размер: **~88 800 строк, 41 метка → 22 выходных класса**
 
-**Правило:** `test.csv` не открывать до завершения всей разработки.
+### Принцип разделения на метки
+
+Для языков, где пользователи пишут в разных алфавитах, созданы отдельные метки  
+по схеме `{lang}_{script}`. fastText обучается на всех 41 метках — это позволяет  
+модели связать символьные n-граммы конкретного алфавита с нужным языком.  
+DistilBERT обучается на 22 объединённых классах (маппинг через `label_mapping.py`).
+
+### Метки датасета (41 → 22)
+
+| Исходная метка | → Выход | Язык | Алфавит |
+|---------------|---------|------|---------|
+| `hy_arm` | `hy` | Армянский | Армянский |
+| `hy_lat` | `hy` | Армянский | Латиница |
+| `hy_cyr` | `hy` | Армянский | Кириллица |
+| `ka_geo` | `ka` | Грузинский | Грузинский |
+| `ka_lat` | `ka` | Грузинский | Латиница |
+| `uz_lat` | `uz` | Узбекский | Латиница |
+| `uz_cyr` | `uz` | Узбекский | Кириллица |
+| `ur_ur` | `ur` | Урду | Арабский (насталик) |
+| `ur_lat` | `ur` | Урду | Латиница |
+| `ne_nep` | `ne` | Непальский | Деванагари |
+| `ne_lat` | `ne` | Непальский | Латиница |
+| `sr_cyr` | `sr` | Сербский | Кириллица |
+| `sr_lat` | `sr` | Сербский | Латиница |
+| `hi_hi` | `hi` | Хинди | Деванагари |
+| `hi_lat` | `hi` | Хинди | Латиница (Hinglish) |
+| `kk` | `kk` | Казахский | Кириллица |
+| `kk_lat` | `kk` | Казахский | Латиница (стандарт 2021) |
+| `ru_cyr` | `ru` | Русский | Кириллица |
+| `ru_lat` | `ru` | Русский | Латиница |
+| `am` | `am` | Амхарский | Эфиопский |
+| `am_lat` | `am` | Амхарский | Латиница |
+| `en` | `en` | Английский | Латиница |
+| `he` | `he` | Иврит | Иврит |
+| `ar` | `ar` | Арабский | Арабское письмо |
+| `az` | `az` | Азербайджанский | Латиница |
+| `ro` | `ro` | Румынский | Латиница |
+| `uk` | `uk` | Украинский | Кириллица |
+| `fr` | `fr` | Французский | Латиница |
+| `es` | `es` | Испанский | Латиница |
+| `tr` | `tr` | Турецкий | Латиница |
+| `fa` | `fa` | Персидский | Арабское письмо |
+| `pt` | `pt` | Португальский | Латиница |
+| `de` | `other` | Немецкий | — |
+| `it` | `other` | Итальянский | — |
+| `nl` | `other` | Нидерландский | — |
+| `pl` | `other` | Польский | — |
+| `bg` | `other` | Болгарский | — |
+| `ja` | `other` | Японский | — |
+| `vi` | `other` | Вьетнамский | — |
+| `ko` | `other` | Корейский | — |
+
+### 5 чувствительных пар (обязательных по заданию)
+
+| Пара | Почему чувствительна | Быстрый путь (Unicode) |
+|------|---------------------|----------------------|
+| hy–az | Политический конфликт (Армения–Азербайджан) | Армянский алфавит → hy |
+| he–ar | Иврит vs арабский — разные Unicode-блоки | Иврит/арабский подсчёт |
+| ur–hi | Оба могут быть на латинице | Деванагари → hi, арабский → ur |
+| ar–fa | Оба — арабское письмо | پچژگ → fa |
+| ru–uk | Оба — кириллица | іїєґ → uk |
 
 ---
 
-## Последовательность запуска
+## Полный pipeline запуска
 
-### Шаг 0. Сборка образа (один раз)
+### Шаг 0. Установка зависимостей
 
 ```bash
 docker-compose build
+docker-compose build trainer_distilbert   # отдельный образ с CUDA (для GPU)
 ```
 
-Пересборка нужна только при изменении `requirements.txt` или `Dockerfile`.
-
----
+Для GPU-сервисов нужен [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
 
 ### Шаг 1. Разбиение датасета
 
@@ -153,16 +148,7 @@ docker-compose build
 docker-compose run --rm splitter
 ```
 
-Производит три файла со стратифицированным распределением языков:
-- `output/train.csv` (70%)
-- `output/val.csv` (15%)
-- `output/test.csv` (15%)
-
-Результат: `output/split_statistics.txt`
-
-> Сервис `cleaner` **не используется** — все 27 классов имеют по 2 500 примеров, редких меток нет.
-
----
+Результат: `output/train.csv` (70%), `output/val.csv` (15%), `output/test.csv` (15%)
 
 ### Шаг 2. Обучение fastText
 
@@ -170,109 +156,62 @@ docker-compose run --rm splitter
 docker-compose run --rm trainer
 ```
 
-Читает `output/train.csv`, применяет `preprocess_text` один раз, подбирает число эпох на val,
-затем обучает итоговую модель. Шаг `preprocessor` **не нужен** — предобработка встроена в trainer.
+Результат: `output/lang_detection_model.bin`
 
-Результаты:
-- `output/lang_detection_model.bin`
-- `output/model_evaluation.txt`
-
-**Время:** 5–15 минут.
-
----
-
-### Шаг 3. Подбор threshold
-
-```bash
-docker-compose run --rm threshold_finder
-```
-
-Перебирает пороги [0.3 … 0.9] на `val.csv`. Выбирает минимальный порог в пределах 0.5% от лучшего accuracy.
-
-Результаты: `output/threshold_results.txt`
-
----
-
-### Шаг 4. Обучение бинарных классификаторов
+### Шаг 3. Обучение бинарных классификаторов
 
 ```bash
 docker-compose run --rm trainer_sensitive
 ```
 
-Тексты нормализуются через `normalize_for_detection` (как в пайплайне).
+Результат: `output/sensitive_classifiers/*.pkl` (5 классификаторов)
 
-Результаты: `output/sensitive_classifiers/ar_fa.pkl`, `hy_az.pkl`, `he_ar.pkl`, `ur_hi.pkl`, `ru_uk.pkl`
-
-**Время:** < 1 минуты.
-
----
-
-### Шаг 5. Бенчмарк скорости
+### Шаг 4. Fine-tune DistilBERT (требует GPU)
 
 ```bash
-docker-compose run --rm benchmark
+docker-compose run --rm trainer_distilbert
 ```
 
-Измеряет:
-- fastText-only: среднее / медиана / min / max, throughput, влияние длины текста
-- Полный пайплайн `LanguageDetector`: среднее, P95, P99, сравнение с порогом 30 мс
+Результат: `output/distilbert_lang_detection/`
 
-Результат: `output/speed_benchmark.txt`
+### Шаг 5. Экспорт DistilBERT → ONNX
 
----
+```bash
+docker-compose run --rm export_onnx
+```
 
-### Шаг 7. Финальная оценка (только в самом конце)
+Результат: `output/distilbert_lang_detection.onnx`
 
-Когда разработка завершена и больше ничего не будет меняться:
+### Шаг 6. Подбор threshold
+
+```bash
+docker-compose run --rm threshold_finder
+```
+
+### Шаг 7. Финальная оценка
 
 ```bash
 docker-compose run --rm evaluator
+docker-compose run --rm eval_real
 ```
-
-Threshold читается автоматически из `output/threshold_results.txt`.  
-Переопределить: `docker-compose run --rm -e THRESHOLD=0.6 evaluator`
-
-Результат: `output/final_evaluation.txt`
-
----
 
 ### Полный pipeline одной командой
 
 ```bash
 docker-compose build && \
 docker-compose run --rm splitter && \
-docker-compose run --rm preprocessor && \
 docker-compose run --rm trainer && \
-docker-compose run --rm threshold_finder && \
 docker-compose run --rm trainer_sensitive && \
-docker-compose run --rm benchmark
+docker-compose run --rm trainer_distilbert && \
+docker-compose run --rm export_onnx && \
+docker-compose run --rm threshold_finder
 ```
-
-После — вручную запустить финальную оценку (шаг 7).
-
----
-
-## Docker-сервисы
-
-| Сервис | Команда | Что делает |
-|--------|---------|-----------|
-| `splitter` | `docker-compose run --rm splitter` | 70/15/15 split → train/val/test |
-| `preprocessor` | `docker-compose run --rm preprocessor` | Очистка train |
-| `trainer` | `docker-compose run --rm trainer` | Обучение fastText |
-| `threshold_finder` | `docker-compose run --rm threshold_finder` | Подбор threshold на val |
-| `trainer_sensitive` | `docker-compose run --rm trainer_sensitive` | Бинарные классификаторы |
-| `benchmark` | `docker-compose run --rm benchmark` | Замер скорости |
-| `evaluator` | `docker-compose run --rm evaluator` | Финальная оценка на test (один раз) |
-| `analyzer` | `docker-compose run --rm analyzer` | Анализ датасета (опционально) |
-| `comparer` | `docker-compose run --rm comparer` | Сравнение версий моделей |
-| `baseline_trainer` | `docker-compose run --rm baseline_trainer` | Обучение baseline fastText (21 класс) |
-| `comparer_solutions` | `docker-compose run --rm comparer_solutions` | Сравнение baseline vs combined |
 
 ---
 
 ## Использование модели
 
-### Полный пайплайн (рекомендуется)
+### Полный пайплайн
 
 ```python
 from scripts.detection.detector import LanguageDetector
@@ -280,203 +219,88 @@ from scripts.detection.detector import LanguageDetector
 detector = LanguageDetector(
     fasttext_model_path='output/lang_detection_model.bin',
     sensitive_classifiers_dir='output/sensitive_classifiers',
-    threshold=0.5,  # заменить на результат find_threshold
+    onnx_model_path='output/distilbert_lang_detection.onnx',
+    threshold=0.5,
 )
 
 lang, conf = detector.detect("Привет, как дела?")
 # → ('ru', 0.97)
 
 lang, conf = detector.detect("Բարի՜ Ծաղիկ")
-# → ('hy', 0.99)  — армянский алфавит (hy_arm), быстрый путь
+# → ('hy', 0.99)  — армянский алфавит, быстрый путь (Level 1)
+
+lang, conf = detector.detect("Ес чем асканум ес инч ек анум")
+# → ('hy', 0.90)  — армянский на кириллице, fastText (Level 2)
 
 lang, conf = detector.detect("Salam, necəsən?")
-# → ('az', 0.95)  — латиница, fastText
-
-lang, conf = detector.detect("این متن فارسی است. پدر چه گفت؟")
-# → ('fa', 0.99)  — персидские символы پچژگ
-
-lang, conf = detector.detect("Доброго ранку! Як справи?")
-# → ('uk', 0.99)  — украинские символы іїєґ, быстрый путь
+# → ('az', 0.95)  — ə → az (Level 4, бинарный классификатор)
 ```
 
 ### Batch
 
 ```python
 results = detector.detect_batch(["Hello", "Salam", "مرحبا"])
-# → [('en', 0.99), ('az', 0.95), ('ar', 0.98)]
-```
-
-### Отладка — топ-3 кандидата
-
-```python
-top3 = detector.detect_top_k("Xush kelibsiz", k=3)
-# → [('uz', 0.82), ('tr', 0.10), ('az', 0.05)]
-```
-
-### fastText-only (без бинарных классификаторов)
-
-```python
-from scripts.utils.predict_with_threshold import LanguageDetectorWithThreshold
-
-detector = LanguageDetectorWithThreshold('output/lang_detection_model.bin', threshold=0.7)
-lang, conf = detector.predict("Hello world", return_confidence=True)
 ```
 
 ---
 
-## Экспорт модели
+## Docker-сервисы
 
-Скопировать для деплоя:
-
-```
-output/
-├── lang_detection_model.bin          # fastText (~50 MB)
-└── sensitive_classifiers/
-    ├── ar_fa.pkl
-    ├── hy_az.pkl
-    ├── he_ar.pkl
-    ├── ur_hi.pkl
-    └── ru_uk.pkl
-
-scripts/
-├── detection/
-├── utils/label_mapping.py
-└── data_processing/preprocess_text.py
-```
-
-Упаковать:
-
-```bash
-tar -czf lang_detection_v1.tar.gz \
-  output/lang_detection_model.bin \
-  output/sensitive_classifiers/ \
-  scripts/detection/ \
-  scripts/utils/ \
-  scripts/data_processing/preprocess_text.py \
-  requirements.txt
-```
+| Сервис | Команда | Что делает |
+|--------|---------|-----------|
+| `splitter` | `docker-compose run --rm splitter` | 70/15/15 split |
+| `trainer` | `docker-compose run --rm trainer` | Обучение fastText |
+| `trainer_sensitive` | `docker-compose run --rm trainer_sensitive` | 5 бинарных классификаторов |
+| `trainer_distilbert` | `docker-compose run --rm trainer_distilbert` | Fine-tune DistilBERT (GPU) |
+| `export_onnx` | `docker-compose run --rm export_onnx` | Экспорт DistilBERT → ONNX |
+| `threshold_finder` | `docker-compose run --rm threshold_finder` | Подбор threshold |
+| `evaluator` | `docker-compose run --rm evaluator` | Финальная оценка на test |
+| `eval_real` | `docker-compose run --rm eval_real` | Оценка на реальных данных |
+| `baseline_trainer` | `docker-compose run --rm baseline_trainer` | Baseline fastText |
+| `comparer_solutions` | `docker-compose run --rm comparer_solutions` | Сравнение моделей |
+| `benchmark` | `docker-compose run --rm benchmark` | Замер скорости |
 
 ---
 
 ## Скорость
 
-| Компонент | Min | Среднее | Max |
-|-----------|-----|---------|-----|
-| fastText-only | 0.01 мс | 0.07 мс | 0.64 мс* |
-| Полный пайплайн | < 0.1 мс** | ~0.5 мс | ~5–10 мс* |
-| Целевой порог | — | — | **30 мс ✓** |
-
-\* тексты > 500 символов  
-\** быстрый путь: армянский, грузинский, иврит, амхарский
-
-Запусти `docker-compose run --rm benchmark` для актуальных цифр.
+| Компонент | Среднее | Максимум |
+|-----------|---------|----------|
+| Level 0: Phrase Dictionary | 0.01 мс | 0.01 мс |
+| Level 1: Script Detector | 0.1 мс | 0.1 мс |
+| Level 2: fastText | 0.05 мс | 0.5 мс |
+| Level 3: DistilBERT ONNX | 8 мс | 10 мс |
+| Level 4: Binary classifiers | 0.5 мс | 1 мс |
+| **Пайплайн (среднее)** | **~2.6 мс** | **~12 мс** |
 
 ---
 
-## Метрики качества
+## Поддерживаемые языки (22 выхода)
 
-> Актуальные метрики получить после переобучения на `lang_detection_diploma.csv`.  
-> Запусти шаги 1–7 и смотри `output/final_evaluation.txt`.
-
-Ориентировочные цели (датасет сбалансирован, 2 500 примеров на класс):
-
-| Метрика | Цель |
-|---------|------|
-| Accuracy | ≥ 97% |
-| Macro F1 | ≥ 97% |
-
----
-
-## Поддерживаемые языки (на выходе детектора)
-
-| Код | Язык | Исходные метки | Скрипт |
-|-----|------|----------------|--------|
-| `am` | Амхарский | `am` | Эфиопский (быстрый путь) |
-| `ar` | Арабский | `ar` | Арабское письмо |
-| `az` | Азербайджанский | `az` | Латиница |
-| `en` | Английский | `en` | Латиница |
-| `es` | Испанский | `es` | Латиница |
-| `fa` | Персидский | `fa` | Арабское письмо |
-| `fr` | Французский | `fr` | Латиница |
-| `he` | Иврит | `he` | Иврит (быстрый путь) |
-| `hi` | Хинди | `hi` | Деванагари |
-| `hy` | Армянский | `hy_arm`, `hy_lat` | Армянский / Латиница |
-| `ka` | Грузинский | `ka_geo`, `ka_lat` | Грузинский / Латиница |
-| `kk` | Казахский | `kk` | Кириллица |
-| `ne` | Непальский | `ne_nep`, `ne_lat` | Деванагари / Латиница |
-| `pt` | Португальский | `pt` | Латиница |
-| `ro` | Румынский | `ro` | Латиница |
-| `ru` | Русский | `ru` | Кириллица |
-| `sr` | Сербский | `sr_cyr`, `sr_lat` | Кириллица / Латиница |
-| `tr` | Турецкий | `tr` | Латиница |
-| `uk` | Украинский | `uk` | Кириллица |
-| `ur` | Урду | `ur_ur`, `ur_lat` | Арабское письмо / Латиница |
-| `uz` | Узбекский | `uz_lat`, `uz_cyr` | Латиница / Кириллица |
-| `other` | Неподдерживаемые | `de`, `it`, `nl`, `pl`, `bg`, `ja`, `vi`, `ko` | CJK/Hangul → быстрый путь |
-
-Итого: **22 выходных кода** (35 меток в датасете, 14 групп объединяются).
-
----
-
-## Исправленные ошибки
-
-| # | Статус | Исправление |
-|---|--------|-------------|
-| 1 | **Исправлено** | `train_fasttext.py` — оценка только на val.csv, test не трогается |
-| 2 | **Исправлено** | `preprocess_text.py` — убран `skiprows=[0,1]`, нормальное чтение CSV |
-| 3 | **Исправлено** | `train_fasttext.py` — реальные параметры (epoch, dim, loss) в отчёте |
-| 4 | **Исправлено** | `predict_with_threshold.py` — модель загружается 1 раз, перебираются только пороги |
-| 5 | **Исправлено** | `predict_with_threshold.py` — добавлены `normalize_for_detection` + `preprocess_text` |
-| 6 | **Исправлено** | `sensitive_router.py` — при `probs[0] >= 0.90` fastText не переопределяется |
-| 7 | **Исправлено** | Добавлены 8 языков (de/it/nl/pl/bg/ja/vi/ko) → `other`, script_detector для CJK/Hangul |
-| 8 | **Исправлено** | `train_fasttext.py` — `preprocess_text` применяется всегда |
-| 9 | **Исправлено** | `benchmark_speed.py` — убран `skiprows=[0,1]` |
-| 10 | **Исправлено** | `base.py` — необученный классификатор возвращает `None` → fallback на fastText |
-| 11 | **Исправлено** | `_pick_threshold` — выбирает порог с лучшим accuracy (минимальный в пределах 0.5%) |
-| 12 | **Исправлено** | `train_fasttext.py` — читает `train.csv` напрямую, preprocess_text 1 раз (не 2) |
-| 13 | **Исправлено** | `find_optimal_epochs.py` — добавлена preprocess_text для train и val |
-| 14 | **Исправлено** | `sensitive_router.py` — если top1 входит в чувствительную пару (но top2 нет) — прогоняет через LogReg |
-| 15 | **Исправлено** | `train_sensitive_classifiers.py` — тексты нормализуются через `normalize_for_detection` |
-| 16 | **Исправлено** | `base.py` — `evaluate` не падает если predict вернул None |
-
----
-
-## Базовая модель (baseline)
-
-Простой fastText на 21 объединённом классе. Без бинарных классификаторов, детектора скрипта и роутера.
-
-```bash
-docker-compose run --rm splitter           # шаг 1 — разделение данных
-docker-compose run --rm baseline_trainer   # обучение baseline
-```
-
-Результат: `output/baseline_model.bin`, `output/baseline_evaluation.txt`
-
----
-
-## Сравнение моделей
-
-Сравнение базовой и комбинированной моделей на `test.csv`:
-
-```bash
-docker-compose run --rm comparer_solutions
-```
-
-Выводит: accuracy, macro F1, ошибки по чувствительным парам, скорость.
-
-Результат: `output/solutions_comparison.txt`
-
----
-
-## Что ещё нужно проекту
-
-- [x] **Базовая модель** — `train_baseline_fasttext.py`
-- [x] **Скрипт сравнения** — `compare_solutions.py`
-- [x] **Исправить ошибки #1–#10** — все 10 исправлены
-- [x] **Класс «other»** — 8 языков × 300 примеров, CJK/Hangul в script_detector
-- [ ] **Переобучить обе модели** — `docker-compose build` → полный pipeline
-- [ ] **Подобрать threshold** — `docker-compose run --rm threshold_finder`
-- [ ] **Сравнить модели** — `docker-compose run --rm comparer_solutions`
+| Код | Язык | Скрипты |
+|-----|------|---------|
+| `am` | Амхарский | Эфиопский, Латиница |
+| `ar` | Арабский | Арабское письмо |
+| `az` | Азербайджанский | Латиница |
+| `en` | Английский | Латиница |
+| `es` | Испанский | Латиница |
+| `fa` | Персидский | Арабское письмо |
+| `fr` | Французский | Латиница |
+| `he` | Иврит | Иврит |
+| `hi` | Хинди | Деванагари, Латиница (Hinglish) |
+| `hy` | Армянский | Армянский, Латиница, Кириллица |
+| `ka` | Грузинский | Грузинский, Латиница |
+| `kk` | Казахский | Кириллица, Латиница (2021) |
+| `ne` | Непальский | Деванагари, Латиница |
+| `pt` | Португальский | Латиница |
+| `ro` | Румынский | Латиница |
+| `ru` | Русский | Кириллица, Латиница |
+| `sr` | Сербский | Кириллица, Латиница |
+| `tr` | Турецкий | Латиница |
+| `uk` | Украинский | Кириллица |
+| `ur` | Урду | Арабский, Латиница |
+| `uz` | Узбекский | Латиница, Кириллица |
+| `other` | Неподдерживаемые | CJK/Hangul/и т.д. |
 
 ---
 
@@ -484,50 +308,62 @@ docker-compose run --rm comparer_solutions
 
 ```
 lang_detection/
-├── data/                          # сырые источники данных по языкам
+├── data/                              # сырые данные по языкам (xlsx)
 │   ├── armenian_dataset.xlsx
+│   ├── armenian_cyrillic_dataset.xlsx
+│   ├── russian_latin_dataset.xlsx
+│   ├── amharic_latin_dataset.xlsx
 │   ├── georgian_dataset.xlsx
-│   └── nepali_dataset.xlsx
+│   ├── nepali_dataset.xlsx
+│   └── kazakh_dataset.xlsx
 ├── benchmarks/
-│   ├── benchmark_speed.py         # замер скорости (fastText + полный пайплайн)
-│   ├── compare_models.py
-│   └── compare_solutions.py       # сравнение baseline vs combined
+│   ├── benchmark_speed.py
+│   ├── compare_solutions.py
+│   ├── eval_real_data.py
+│   └── collect_errors.py
 ├── scripts/
-│   ├── dataset_collection/        # скрипты сбора и подготовки сырых данных
+│   ├── dataset_collection/            # сбор данных с HuggingFace
 │   │   ├── armenian_dataset_to_xlsx.py
+│   │   ├── armenian_cyrillic_dataset_to_xlsx.py
+│   │   ├── russian_latin_dataset_to_xlsx.py
+│   │   ├── amharic_latin_dataset_to_xlsx.py
 │   │   ├── georgian_dataset_to_xlsx.py
-│   │   └── nepali_dataset_to_xlsx.py
-│   ├── data_processing/           # обработка собранного датасета
-│   │   ├── analyze_dataset.py
-│   │   ├── clean_dataset.py       # удаление редких классов (в новом датасете не нужен)
-│   │   ├── preprocess_text.py     # очистка + normalize_for_detection
-│   │   └── split_dataset.py       # 70/15/15 → train/val/test
+│   │   ├── nepali_dataset_to_xlsx.py
+│   │   ├── kazakh_dataset_to_xlsx.py
+│   │   └── rebuild_diploma_csv.py
+│   ├── data_processing/
+│   │   ├── preprocess_text.py
+│   │   ├── split_dataset.py
+│   │   └── clean_dataset.py
 │   ├── detection/
-│   │   ├── detector.py            # LanguageDetector — точка входа
-│   │   ├── script_detector.py     # уникальные алфавиты → быстрый путь
-│   │   ├── sensitive_router.py    # роутер чувствительных пар
+│   │   ├── detector.py                # LanguageDetector — точка входа
+│   │   ├── script_detector.py         # уникальные алфавиты → быстрый путь
+│   │   ├── sensitive_router.py        # роутер чувствительных пар (5 пар)
 │   │   └── sensitive_classifiers/
-│   │       ├── base.py            # char n-gram TF-IDF + LogReg
-│   │       ├── ar_fa.py           # арабский / персидский
-│   │       ├── ru_uk.py           # русский / украинский
-│   │       ├── hy_az.py           # армянский / азербайджанский
-│   │       ├── he_ar.py           # иврит / арабский
-│   │       └── ur_hi.py           # урду / хинди
-│   ├── diagnostic/                # диагностика датасета
-│   │   ├── check_data_loss.py
-│   │   └── verify_dataset.py
+│   │       ├── base.py                # char n-gram TF-IDF + LogReg
+│   │       ├── hy_az.py
+│   │       ├── he_ar.py
+│   │       ├── ur_hi.py
+│   │       ├── ar_fa.py
+│   │       ├── ru_uk.py
+│   │       ├── az_tr.py
+│   │       ├── es_pt.py
+│   │       ├── ru_sr.py
+│   │       └── uz_kk.py
 │   ├── training/
 │   │   ├── train_fasttext.py
-│   │   ├── train_baseline_fasttext.py  # baseline: 21 класс, без роутера
-│   │   ├── find_optimal_epochs.py
+│   │   ├── train_baseline_fasttext.py
 │   │   ├── train_sensitive_classifiers.py
-│   │   ├── find_threshold.py      # docker-compose run --rm threshold_finder
-│   │   └── evaluate_final.py      # docker-compose run --rm evaluator
+│   │   ├── train_distilbert.py        # DistilBERT fine-tune (GPU)
+│   │   ├── export_distilbert_onnx.py  # Экспорт → ONNX
+│   │   ├── find_optimal_params.py
+│   │   ├── find_threshold.py
+│   │   └── evaluate_final.py
 │   └── utils/
-│       ├── label_mapping.py       # hy_arm/hy_lat→hy, ka_lat→ka, uz_lat/uz_cyr→uz, …
+│       ├── label_mapping.py           # 41→22 маппинг меток
 │       └── predict_with_threshold.py
-├── output/                        # создаётся автоматически
-├── lang_detection_diploma.csv    # финальный датасет (вход пайплайна)
+├── output/                            # создаётся автоматически
+├── lang_detection_diploma.csv         # датасет (вход пайплайна)
 ├── docker-compose.yml
 ├── Dockerfile
 └── requirements.txt
@@ -538,7 +374,7 @@ lang_detection/
 ## Требования
 
 ```
-Python 3.11+  ·  Docker  ·  Docker Compose
-pandas>=2.0.0  ·  scikit-learn>=1.3.0  ·  fasttext>=0.9.2
-numpy<2.0.0  ·  joblib>=1.2.0  ·  openpyxl>=3.1.0
+Python 3.11+  ·  Docker  ·  Docker Compose  ·  CUDA GPU (для DistilBERT)
+pandas · scikit-learn · fasttext · torch · transformers · onnxruntime
+numpy · joblib · openpyxl · datasets (HuggingFace)
 ```

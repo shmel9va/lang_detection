@@ -149,6 +149,18 @@ services:
       - PYTHONUNBUFFERED=1
     command: python benchmarks/eval_real_data.py
 
+  eval_real2:
+    build: .
+    container_name: lang_detection_eval_real2
+    volumes:
+      - ./output:/app/output
+      - ./benchmarks:/app/benchmarks:ro
+      - ./scripts:/app/scripts:ro
+      - ./real_data_2.csv:/app/real_data_2.csv:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: python benchmarks/eval_real_data.py real_data_2.csv
+
   collect_errors:
     build: .
     container_name: lang_detection_collect_errors
@@ -160,3 +172,29 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
     command: python benchmarks/collect_errors.py
+
+  trainer_distilbert:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    container_name: lang_detection_trainer_distilbert
+    runtime: nvidia
+    volumes:
+      - ./output:/app/output
+      - ./scripts:/app/scripts:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - NVIDIA_VISIBLE_DEVICES=all
+    command: python -m scripts.training.train_distilbert
+
+  export_onnx:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    container_name: lang_detection_export_onnx
+    volumes:
+      - ./output:/app/output
+      - ./scripts:/app/scripts:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: python -m scripts.training.export_distilbert_onnx

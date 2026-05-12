@@ -20,6 +20,8 @@ from sklearn.metrics import classification_report
 from scripts.detection.detector import LanguageDetector
 from scripts.utils.label_mapping import merge_label
 
+ONNX_PATH = "output/distilbert_lang_detection.onnx"
+
 MODEL_PATH      = "output/lang_detection_model.bin"
 CLASSIFIERS_DIR = "output/sensitive_classifiers"
 TEST_PATH       = "output/test.csv"
@@ -57,10 +59,11 @@ def main() -> None:
     detector = LanguageDetector(
         fasttext_model_path=MODEL_PATH,
         sensitive_classifiers_dir=CLASSIFIERS_DIR,
+        onnx_model_path=ONNX_PATH if os.path.exists(ONNX_PATH) else None,
         threshold=threshold,
     )
 
-    df = pd.read_csv(TEST_PATH, sep=";")
+    df = pd.read_csv(TEST_PATH, sep=";", encoding="utf-8", on_bad_lines="skip")
     print(f"Test примеров: {len(df)}\n")
 
     y_true, y_pred = [], []

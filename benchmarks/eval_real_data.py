@@ -1,41 +1,62 @@
 """
 Оценка моделей на реальных данных (real_data.csv).
 
-Сравнивает baseline и combined модели на данных из продакшена.
+Сравнивает baseline, combined (fastText+binary) и full pipeline (+ DistilBERT ONNX).
 real_data.csv содержит колонки task_language и rider_ml_message.
 
 Запуск:
-    docker-compose run --rm comparer_solutions python benchmarks/eval_real_data.py
-    # или локально если модели собраны:
+    docker-compose run --rm eval_real
     python benchmarks/eval_real_data.py
 """
 
+import csv
 import os
 import sys
 import time
+from collections import Counter
 
 import numpy as np
-from sklearn.metrics import classification_report, accuracy_score, f1_score
+from sklearn.metrics import (
+    accuracy_score,
+    f1_score,
+    precision_recall_fscore_support,
+    classification_report,
+)
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from scripts.utils.label_mapping import merge_label
 
+VALID_LABELS = {
+    "hy", "uz", "en", "ur", "he", "sr", "ne", "ar", "am", "az",
+    "ka", "ro", "ru", "uk", "fr", "es", "tr", "hi", "kk", "fa", "pt", "other",
+}
+
+ALL_SENSITIVE_PAIRS = [
+    ("hy", "az"), ("ur", "hi"), ("ru", "uk"), ("he", "ar"), ("ar", "fa"),
+]
+
 
 def _read_real_data(path="real_data.csv"):
-    import csv
     rows = []
     with open(path, "r", encoding="utf-8-sig") as f:
-        reader = csv.reader(f, delimiter=";", quotechar='"')
-        header = next(reader)
+        reader = csv.DictReader(f, delimiter=";", quotechar='"')
         for row in reader:
-            if len(row) < 2:
-                continue
-            lbl = row[0].strip().strip('"')
-            txt = row[1].strip().strip('"')
-            if not lbl or not txt:
-                continue
-            rows.append((lbl, txt))
+            if "request_text" in row and "result" in row:
+                txt = (row.get("request_text") or "").strip()
+                lbl = (row.get("result") or "").strip()
+            elif "rider_ml_message" in row and "task_language" in row:
+                txt = (row.get("rider_ml_message") or "").strip().strip('"')
+                lbl = (row.get("task_language") or "").strip().strip('"')
+            else:
+                vals = list(row.values())
+                if len(vals) < 2:
+                    continue
+                lbl = vals[0].strip().strip('"')
+                txt = vals[1].strip().strip('"')
+            lbl = lbl.strip('"')
+            if lbl and txt:
+                rows.append((lbl, txt))
     return rows
 
 
@@ -46,8 +67,7 @@ def _evaluate_baseline(model_path, data):
     model = fasttext.load_model(model_path)
     y_true, y_pred, times = [], [], []
     for true_lbl, text in data:
-        processed = preprocess_text(text)
-        processed = processed.replace("\n", " ").replace("\r", " ").strip()
+        processed = preprocess_text(text).replace("\n", " ").replace("\r", " ").strip()
         if not processed:
             continue
         t0 = time.time()
@@ -59,12 +79,20 @@ def _evaluate_baseline(model_path, data):
     return y_true, y_pred, np.array(times) * 1000
 
 
-def _evaluate_combined(model_path, classifiers_dir, threshold, data):
+def _evaluate_combined(model_path, classifiers_dir, threshold, data, onnx_path=None):
     from scripts.detection.detector import LanguageDetector
+
+    onnx_config = None
+    if onnx_path:
+        onnx_config = onnx_path.replace(".onnx", "/label_config.json")
+        if not os.path.exists(onnx_config):
+            onnx_config = os.path.join(os.path.dirname(onnx_path), "distilbert_lang_detection", "label_config.json")
 
     detector = LanguageDetector(
         fasttext_model_path=model_path,
         sensitive_classifiers_dir=classifiers_dir,
+        onnx_model_path=onnx_path,
+        onnx_config_path=onnx_config,
         threshold=threshold,
         router_verbose=False,
     )
@@ -76,15 +104,6 @@ def _evaluate_combined(model_path, classifiers_dir, threshold, data):
         y_true.append(true_lbl)
         y_pred.append(lang)
     return y_true, y_pred, np.array(times) * 1000
-
-
-SENSITIVE_PAIRS = [
-    ("hy", "az"),
-    ("ur", "hi"),
-    ("ru", "uk"),
-    ("he", "ar"),
-    ("ar", "fa"),
-]
 
 
 def _pair_errors(y_true, y_pred, pairs):
@@ -106,185 +125,230 @@ def _pair_errors(y_true, y_pred, pairs):
 
 
 def main():
-    data_path = "real_data.csv"
+    data_path = sys.argv[1] if len(sys.argv) > 1 else "real_data.csv"
     if not os.path.exists(data_path):
         print(f"Файл не найден: {data_path}")
         sys.exit(1)
 
     raw = _read_real_data(data_path)
-    print(f"Загружено: {len(raw)} строк\n")
-
-    valid_labels = {"hy", "uz", "en", "ur", "he", "sr", "ne", "ar", "am", "az",
-                    "ka", "ro", "ru", "uk", "fr", "es", "tr", "hi", "kk", "fa", "pt", "other"}
-
-    data = [(lbl, txt) for lbl, txt in raw if lbl in valid_labels]
+    data = [(lbl, txt) for lbl, txt in raw if lbl in VALID_LABELS]
     skipped = len(raw) - len(data)
-    print(f"Валидных (известный язык): {len(data)}")
-    if skipped:
-        print(f"Пропущено (неизвестный язык/мусор): {skipped}")
+    print(f"Загружено: {len(raw)}, валидных: {len(data)}, пропущено: {skipped}\n")
 
-    from collections import Counter
     lbl_counts = Counter(lbl for lbl, _ in data)
-    print(f"\nРаспределение языков:")
+    print("Распределение языков:")
     for lbl, cnt in lbl_counts.most_common():
         print(f"  {lbl:<8} {cnt:>5}  ({cnt/len(data)*100:.1f}%)")
 
     has_baseline = os.path.exists("output/baseline_model.bin")
     has_combined = os.path.exists("output/lang_detection_model.bin")
+    has_onnx = os.path.exists("output/distilbert_lang_detection.onnx")
 
-    b_true = b_pred = b_times = None
-    c0_true = c0_pred = c0_times = None
-
-    if has_baseline:
-        print(f"\n{'=' * 70}")
-        print("БАЗОВАЯ МОДЕЛЬ")
-        print("=" * 70)
-        b_true, b_pred, b_times = _evaluate_baseline("output/baseline_model.bin", data)
-        print(f"  Accuracy:    {accuracy_score(b_true, b_pred):.4f}")
-        print(f"  Macro F1:    {f1_score(b_true, b_pred, average='macro', zero_division=0):.4f}")
-        print(f"  Скорость:    {b_times.mean():.3f} мс (среднее)")
-    else:
-        print("\nБазовая модель не найдена. Запустите: docker-compose run --rm baseline_trainer")
-
-    if has_combined:
-        print(f"\n{'=' * 70}")
-        print("КОМБИНИРОВАННАЯ МОДЕЛЬ (threshold=0)")
-        print("=" * 70)
-        c0_true, c0_pred, c0_times = _evaluate_combined(
-            "output/lang_detection_model.bin",
-            "output/sensitive_classifiers",
-            0.0,
-            data,
-        )
-        print(f"  Accuracy:    {accuracy_score(c0_true, c0_pred):.4f}")
-        print(f"  Macro F1:    {f1_score(c0_true, c0_pred, average='macro', zero_division=0):.4f}")
-        print(f"  Скорость:    {c0_times.mean():.3f} мс (среднее)")
-    else:
-        print("\nКомбинированная модель не найдена. Запустите: docker-compose run --rm trainer")
-
-    if not has_baseline and not has_combined:
-        sys.exit(1)
-
+    results = {}
     lines = []
 
     def out(s=""):
         print(s)
         lines.append(s)
 
+    # ── Baseline ─────────────────────────────────────────────────────────
+    if has_baseline:
+        out(f"\n{'=' * 70}")
+        out("БАЗОВАЯ МОДЕЛЬ (fastText only, 21 класс)")
+        out("=" * 70)
+        y_true, y_pred, times = _evaluate_baseline("output/baseline_model.bin", data)
+        acc = accuracy_score(y_true, y_pred)
+        f1 = f1_score(y_true, y_pred, average="macro", zero_division=0)
+        out(f"  Accuracy:  {acc:.4f}")
+        out(f"  Macro F1:  {f1:.4f}")
+        out(f"  Ошибок:    {sum(1 for t, p in zip(y_true, y_pred) if t != p)}")
+        out(f"  Скорость:  {times.mean():.3f} мс (среднее), {np.percentile(times, 95):.1f} мс (P95)")
+        results["baseline"] = (y_true, y_pred, times)
+    else:
+        out("\nБазовая модель не найдена. Пропуск.")
+
+    # ── Combined (fastText + 9 binary classifiers) ───────────────────────
+    if has_combined:
+        out(f"\n{'=' * 70}")
+        out("КОМБИНИРОВАННАЯ МОДЕЛЬ (fastText + 5 бинарных, без Transformer)")
+        out("=" * 70)
+        y_true, y_pred, times = _evaluate_combined(
+            "output/lang_detection_model.bin",
+            "output/sensitive_classifiers",
+            0.0,
+            data,
+            onnx_path=None,
+        )
+        acc = accuracy_score(y_true, y_pred)
+        f1 = f1_score(y_true, y_pred, average="macro", zero_division=0)
+        out(f"  Accuracy:  {acc:.4f}")
+        out(f"  Macro F1:  {f1:.4f}")
+        out(f"  Ошибок:    {sum(1 for t, p in zip(y_true, y_pred) if t != p)}")
+        out(f"  Скорость:  {times.mean():.3f} мс (среднее), {np.percentile(times, 95):.1f} мс (P95)")
+        results["combined"] = (y_true, y_pred, times)
+    else:
+        out("\nКомбинированная модель не найдена. Пропуск.")
+
+    # ── Full pipeline (+ DistilBERT ONNX) ────────────────────────────────
+    if has_combined and has_onnx:
+        out(f"\n{'=' * 70}")
+        out("ПОЛНЫЙ ПАЙПЛАЙН (fastText + DistilBERT ONNX + 5 бинарных)")
+        out("=" * 70)
+        y_true, y_pred, times = _evaluate_combined(
+            "output/lang_detection_model.bin",
+            "output/sensitive_classifiers",
+            0.0,
+            data,
+            onnx_path="output/distilbert_lang_detection.onnx",
+        )
+        acc = accuracy_score(y_true, y_pred)
+        f1 = f1_score(y_true, y_pred, average="macro", zero_division=0)
+        out(f"  Accuracy:  {acc:.4f}")
+        out(f"  Macro F1:  {f1:.4f}")
+        out(f"  Ошибок:    {sum(1 for t, p in zip(y_true, y_pred) if t != p)}")
+        out(f"  Скорость:  {times.mean():.3f} мс (среднее), {np.percentile(times, 95):.1f} мс (P95)")
+        results["full"] = (y_true, y_pred, times)
+    elif has_combined:
+        out("\nONNX модель не найдена — полный пайплайн пропущен.")
+        out("  Запустите: docker-compose run --rm trainer_distilbert && docker-compose run --rm export_onnx")
+
+    # ── Сравнение ────────────────────────────────────────────────────────
     out(f"\n{'=' * 70}")
-    out("СРАВНЕНИЕ НА РЕАЛЬНЫХ ДАННЫХ")
+    out("СРАВНЕНИЕ МОДЕЛЕЙ")
     out("=" * 70)
 
-    if has_baseline and has_combined:
-        out(f"\n{'Метрика':<30} {'Базовая':>12} {'Комб.(t=0)':>12} {'Δ':>10}")
-        out("-" * 70)
+    MIN_SAMPLES = 10
+    meaningful_labels = sorted(l for l, c in lbl_counts.items() if c >= MIN_SAMPLES)
+    tiny_labels = sorted(l for l, c in lbl_counts.items() if c < MIN_SAMPLES)
+    if tiny_labels:
+        out(f"\n  Классы с <{MIN_SAMPLES} семплами (исключены из Macro F1*): {', '.join(f'{l}({lbl_counts[l]})' for l in tiny_labels)}")
 
-        b_acc = accuracy_score(b_true, b_pred)
-        c0_acc = accuracy_score(c0_true, c0_pred)
-        out(f"{'Accuracy':<30} {b_acc:>12.4f} {c0_acc:>12.4f} {c0_acc - b_acc:>+10.4f}")
+    if len(results) >= 2:
+        names = list(results.keys())
+        out(f"\n{'Метрика':<30} " + " ".join(f"{n:>14}" for n in names))
+        out("-" * (30 + 16 * len(results)))
 
-        b_f1 = f1_score(b_true, b_pred, average="macro", zero_division=0)
-        c0_f1 = f1_score(c0_true, c0_pred, average="macro", zero_division=0)
-        out(f"{'Macro F1':<30} {b_f1:>12.4f} {c0_f1:>12.4f} {c0_f1 - b_f1:>+10.4f}")
+        for metric_name, metric_fn in [
+            ("Accuracy", lambda yt, yp: accuracy_score(yt, yp)),
+            ("Macro F1 (all)", lambda yt, yp: f1_score(yt, yp, average="macro", zero_division=0)),
+            (f"Macro F1* (N≥{MIN_SAMPLES})", lambda yt, yp: f1_score(yt, yp, labels=meaningful_labels, average="macro", zero_division=0)),
+        ]:
+            vals = {n: metric_fn(*r[:2]) for n, r in results.items()}
+            out(f"{metric_name:<30} " + " ".join(f"{vals[n]:>14.4f}" for n in names))
 
-        b_err = sum(1 for t, p in zip(b_true, b_pred) if t != p)
-        c0_err = sum(1 for t, p in zip(c0_true, c0_pred) if t != p)
-        out(f"{'Всего ошибок':<30} {b_err:>12} {c0_err:>12} {c0_err - b_err:>+10}")
+        errs = {n: sum(1 for t, p in zip(r[0], r[1]) if t != p) for n, r in results.items()}
+        out(f"{'Всего ошибок':<30} " + " ".join(f"{errs[n]:>14}" for n in names))
 
-        if b_times is not None and c0_times is not None:
-            out(f"{'Скорость среднее (мс)':<30} {b_times.mean():>12.3f} {c0_times.mean():>12.3f}")
+        speeds = {n: r[2].mean() for n, r in results.items()}
+        out(f"{'Скорость (мс, среднее)':<30} " + " ".join(f"{speeds[n]:>14.3f}" for n in names))
 
-    # ── Per-class F1 ──────────────────────────────────────────────────
-    if has_baseline and has_combined:
-        from sklearn.metrics import precision_recall_fscore_support
-        all_labels = sorted(set(b_true) | set(c0_true) | set(b_pred) | set(c0_pred))
+        p95 = {n: np.percentile(r[2], 95) for n, r in results.items()}
+        out(f"{'Скорость P95 (мс)':<30} " + " ".join(f"{p95[n]:>14.1f}" for n in names))
 
-        _, _, b_f1_cls, _ = precision_recall_fscore_support(b_true, b_pred, labels=all_labels, average=None, zero_division=0)
-        _, _, c0_f1_cls, _ = precision_recall_fscore_support(c0_true, c0_pred, labels=all_labels, average=None, zero_division=0)
+    # ── Per-class F1 ─────────────────────────────────────────────────────
+    if len(results) >= 2:
+        all_labels = sorted(set().union(*(set(r[0]) | set(r[1]) for r in results.values())))
+
+        f1_per_model = {}
+        for name, (yt, yp, _) in results.items():
+            _, _, f1_cls, _ = precision_recall_fscore_support(
+                yt, yp, labels=all_labels, average=None, zero_division=0,
+            )
+            f1_per_model[name] = f1_cls
 
         out(f"\n{'=' * 70}")
         out("ПОКЛАССОВЫЙ F1")
         out("=" * 70)
-        out(f"\n{'Класс':<8} {'N':>6} {'Base F1':>10} {'Comb F1':>10} {'Δ':>10}")
-        out("-" * 50)
+        header = f"{'Класс':<8} {'N':>6}"
+        for name in results:
+            header += f" {name + ' F1':>14}"
+        out(header)
+        out("-" * len(header))
         for i, lbl in enumerate(all_labels):
             n = lbl_counts.get(lbl, 0)
-            bf = b_f1_cls[i]
-            cf = c0_f1_cls[i]
-            delta = cf - bf
-            marker = " *" if abs(delta) >= 0.01 else ""
-            out(f"{lbl:<8} {n:>6} {bf:>10.4f} {cf:>10.4f} {delta:>+10.4f}{marker}")
+            row = f"{lbl:<8} {n:>6}"
+            for name in results:
+                row += f" {f1_per_model[name][i]:>14.4f}"
+            out(row)
 
-    # ── Sensitive pairs ───────────────────────────────────────────────
+    # ── Sensitive pairs ──────────────────────────────────────────────────
     out(f"\n{'=' * 70}")
-    out("ЧУВСТВИТЕЛЬНЫЕ ПАРЫ")
+    out("ЧУВСТВИТЕЛЬНЫЕ ПАРЫ (5 пар)")
     out("=" * 70)
 
-    if has_baseline and has_combined:
-        b_pairs = _pair_errors(b_true, b_pred, SENSITIVE_PAIRS)
-        c0_pairs = _pair_errors(c0_true, c0_pred, SENSITIVE_PAIRS)
+    pair_errors_per_model = {}
+    for name, (yt, yp, _) in results.items():
+        pair_errors_per_model[name] = _pair_errors(yt, yp, ALL_SENSITIVE_PAIRS)
 
-        out(f"\n{'Пара':<10} {'N':>5} {'Баз.ош':>8} {'Баз.%':>8} {'Комб.ош':>8} {'Комб.%':>8} {'Δ':>8}")
-        out("-" * 65)
-        for pair in SENSITIVE_PAIRS:
-            bp = b_pairs[pair]
-            cp = c0_pairs[pair]
-            if bp["total"] == 0:
+    if results:
+        header = f"{'Пара':<10} {'N':>5}"
+        for name in results:
+            header += f" {name + ' ош':>12} {name + ' %':>8}"
+        out(f"\n{header}")
+        out("-" * len(header))
+
+        for pair in ALL_SENSITIVE_PAIRS:
+            first_model = list(results.keys())[0]
+            total = pair_errors_per_model[first_model][pair]["total"]
+            if total == 0:
                 continue
-            delta_err = cp["errors"] - bp["errors"]
-            out(
-                f"{pair[0]}-{pair[1]:<5}"
-                f" {bp['total']:>5}"
-                f" {bp['errors']:>8}"
-                f" {bp['error_rate']:>7.2%}"
-                f" {cp['errors']:>8}"
-                f" {cp['error_rate']:>7.2%}"
-                f" {delta_err:>+8}"
-            )
+            row = f"{pair[0]}-{pair[1]:<5} {total:>5}"
+            for name in results:
+                pe = pair_errors_per_model[name][pair]
+                row += f" {pe['errors']:>12} {pe['error_rate']:>7.1%}"
+            out(row)
 
         out(f"\nПерекрёстные ошибки:")
-        for pair in SENSITIVE_PAIRS:
-            bp = b_pairs[pair]
-            cp = c0_pairs[pair]
-            if bp["total"] == 0:
+        for pair in ALL_SENSITIVE_PAIRS:
+            first_model = list(results.keys())[0]
+            total = pair_errors_per_model[first_model][pair]["total"]
+            if total == 0:
                 continue
-            key1 = f"{pair[0]}->{pair[1]}"
-            key2 = f"{pair[1]}->{pair[0]}"
             out(f"  {pair[0]}-{pair[1]}:")
-            out(f"    Баз.:  {key1}={bp[key1]}, {key2}={bp[key2]}")
-            out(f"    Комб.: {key1}={cp[key1]}, {key2}={cp[key2]}")
+            for name in results:
+                pe = pair_errors_per_model[name][pair]
+                key1 = f"{pair[0]}->{pair[1]}"
+                key2 = f"{pair[1]}->{pair[0]}"
+                out(f"    {name:>12}: {key1}={pe[key1]}, {key2}={pe[key2]}")
 
-    # ── Error examples ────────────────────────────────────────────────
-    if has_combined:
+    # ── Error examples ──────────────────────────────────────────────────
+    if "full" in results:
+        y_true, y_pred, _ = results["full"]
+        model_label = "ПОЛНЫЙ ПАЙПЛАЙН"
+    elif "combined" in results:
+        y_true, y_pred, _ = results["combined"]
+        model_label = "КОМБИНИРОВАННАЯ МОДЕЛЬ"
+    elif "baseline" in results:
+        y_true, y_pred, _ = results["baseline"]
+        model_label = "БАЗОВАЯ МОДЕЛЬ"
+    else:
+        y_true = y_pred = None
+        model_label = None
+
+    if y_true is not None:
         out(f"\n{'=' * 70}")
-        out("ПРИМЕРЫ ОШИБОК КОМБИНИРОВАННОЙ МОДЕЛИ (первые 20)")
+        out(f"ПРИМЕРЫ ОШИБОК: {model_label} (первые 30)")
         out("=" * 70)
-        errors_shown = 0
+        shown = 0
         for i, (true_lbl, text) in enumerate(data):
-            if c0_pred[i] != true_lbl:
-                out(f"\n  [{true_lbl}] -> предсказано [{c0_pred[i]}]")
-                out(f"  Текст: {text[:150]}")
-                errors_shown += 1
-                if errors_shown >= 20:
+            if y_pred[i] != true_lbl:
+                out(f"\n  [{true_lbl}] -> [{y_pred[i]}]")
+                out(f"  {text[:200]}")
+                shown += 1
+                if shown >= 30:
                     break
 
-    # ── Save report ───────────────────────────────────────────────────
+    # ── Save report ─────────────────────────────────────────────────────
     report_path = "output/real_data_evaluation.txt"
     with open(report_path, "w", encoding="utf-8") as f:
         f.write("ОЦЕНКА НА РЕАЛЬНЫХ ДАННЫХ (real_data.csv)\n")
         f.write("=" * 70 + "\n\n")
-        f.write(f"Всего строк: {len(raw)}, валидных: {len(data)}\n\n")
+        f.write(f"Всего строк: {len(raw)}, валидных: {len(data)}, пропущено: {skipped}\n\n")
 
-        if has_baseline:
-            f.write("БАЗОВАЯ МОДЕЛЬ\n")
+        for name, (yt, yp, _) in results.items():
+            f.write(f"\n{name.upper()}\n")
             f.write("-" * 40 + "\n")
-            f.write(classification_report(b_true, b_pred, digits=4, zero_division=0))
-            f.write("\n")
-
-        if has_combined:
-            f.write("КОМБИНИРОВАННАЯ МОДЕЛЬ (t=0)\n")
-            f.write("-" * 40 + "\n")
-            f.write(classification_report(c0_true, c0_pred, digits=4, zero_division=0))
+            f.write(classification_report(yt, yp, digits=4, zero_division=0))
             f.write("\n")
 
         f.write("\nСРАВНЕНИЕ\n")

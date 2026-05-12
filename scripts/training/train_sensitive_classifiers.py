@@ -23,11 +23,15 @@ from typing import List, Optional, Tuple, Type
 import pandas as pd
 
 from scripts.detection.sensitive_classifiers.ar_fa import ArFaClassifier
+from scripts.detection.sensitive_classifiers.az_tr import AzTrClassifier
 from scripts.detection.sensitive_classifiers.base import SensitivePairClassifier
+from scripts.detection.sensitive_classifiers.es_pt import EsPtClassifier
 from scripts.detection.sensitive_classifiers.he_ar import HeArClassifier
 from scripts.detection.sensitive_classifiers.hy_az import HyAzClassifier
+from scripts.detection.sensitive_classifiers.ru_sr import RuSrClassifier
 from scripts.detection.sensitive_classifiers.ru_uk import RuUkClassifier
 from scripts.detection.sensitive_classifiers.ur_hi import UrHiClassifier
+from scripts.detection.sensitive_classifiers.uz_kk import UzKkClassifier
 from scripts.utils.label_mapping import merge_label
 from scripts.data_processing.preprocess_text import normalize_for_detection
 
@@ -38,6 +42,10 @@ PAIRS: List[Tuple[str, str, Type[SensitivePairClassifier]]] = [
     ("hy", "az", HyAzClassifier),
     ("he", "ar", HeArClassifier),
     ("ur", "hi", UrHiClassifier),
+    ("az", "tr", AzTrClassifier),
+    ("es", "pt", EsPtClassifier),
+    ("ru", "sr", RuSrClassifier),
+    ("uz", "kk", UzKkClassifier),
 ]
 
 
