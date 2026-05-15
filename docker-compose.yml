@@ -144,7 +144,7 @@ services:
       - ./output:/app/output
       - ./benchmarks:/app/benchmarks:ro
       - ./scripts:/app/scripts:ro
-      - ./real_data.csv:/app/real_data.csv:ro
+      - ./:/app/data_host:ro
     environment:
       - PYTHONUNBUFFERED=1
     command: python benchmarks/eval_real_data.py

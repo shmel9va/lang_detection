@@ -126,10 +126,20 @@ def _pair_errors(y_true, y_pred, pairs):
     return results
 
 
+def _resolve_path(filename):
+    candidates = [filename, os.path.join("data_host", filename), os.path.join("/app/data_host", filename)]
+    for p in candidates:
+        if os.path.exists(p):
+            return p
+    return filename
+
+
 def main():
-    data_path = sys.argv[1] if len(sys.argv) > 1 else "real_data.csv"
+    data_path = _resolve_path(sys.argv[1] if len(sys.argv) > 1 else "real_data.csv")
     if not os.path.exists(data_path):
         print(f"Файл не найден: {data_path}")
+        print("Положите CSV файл в корень проекта и запустите:")
+        print("  docker-compose run --rm eval_real python benchmarks/eval_real_data.py ваш_файл.csv")
         sys.exit(1)
 
     raw = _read_real_data(data_path)
