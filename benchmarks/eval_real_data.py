@@ -70,9 +70,9 @@ def _evaluate_baseline(model_path, data):
         processed = preprocess_text(text).replace("\n", " ").replace("\r", " ").strip()
         if not processed:
             continue
-        t0 = time.time()
+        t0 = time.perf_counter()
         labels, _ = model.predict(processed, k=1)
-        times.append(time.time() - t0)
+        times.append(time.perf_counter() - t0)
         pred = merge_label(labels[0].replace("__label__", ""))
         y_true.append(true_lbl)
         y_pred.append(pred)
@@ -96,11 +96,13 @@ def _evaluate_combined(model_path, classifiers_dir, threshold, data, onnx_path=N
         threshold=threshold,
         router_verbose=False,
     )
+    if onnx_path and detector.onnx_session is not None:
+        detector.detect("warm up")
     y_true, y_pred, times = [], [], []
     for true_lbl, text in data:
-        t0 = time.time()
+        t0 = time.perf_counter()
         lang, _ = detector.detect(text)
-        times.append(time.time() - t0)
+        times.append(time.perf_counter() - t0)
         y_true.append(true_lbl)
         y_pred.append(lang)
     return y_true, y_pred, np.array(times) * 1000
@@ -162,7 +164,7 @@ def main():
         out(f"  Accuracy:  {acc:.4f}")
         out(f"  Macro F1:  {f1:.4f}")
         out(f"  Ошибок:    {sum(1 for t, p in zip(y_true, y_pred) if t != p)}")
-        out(f"  Скорость:  {times.mean():.3f} мс (среднее), {np.percentile(times, 95):.1f} мс (P95)")
+        out(f"  Скорость:  {times.mean():.3f} мс (среднее), {np.percentile(times, 95):.1f} мс (P95), {times.min():.3f} мс (мин), {times.max():.1f} мс (макс)")
         results["baseline"] = (y_true, y_pred, times)
     else:
         out("\nБазовая модель не найдена. Пропуск.")
@@ -184,7 +186,7 @@ def main():
         out(f"  Accuracy:  {acc:.4f}")
         out(f"  Macro F1:  {f1:.4f}")
         out(f"  Ошибок:    {sum(1 for t, p in zip(y_true, y_pred) if t != p)}")
-        out(f"  Скорость:  {times.mean():.3f} мс (среднее), {np.percentile(times, 95):.1f} мс (P95)")
+        out(f"  Скорость:  {times.mean():.3f} мс (среднее), {np.percentile(times, 95):.1f} мс (P95), {times.min():.3f} мс (мин), {times.max():.1f} мс (макс)")
         results["combined"] = (y_true, y_pred, times)
     else:
         out("\nКомбинированная модель не найдена. Пропуск.")
@@ -206,7 +208,7 @@ def main():
         out(f"  Accuracy:  {acc:.4f}")
         out(f"  Macro F1:  {f1:.4f}")
         out(f"  Ошибок:    {sum(1 for t, p in zip(y_true, y_pred) if t != p)}")
-        out(f"  Скорость:  {times.mean():.3f} мс (среднее), {np.percentile(times, 95):.1f} мс (P95)")
+        out(f"  Скорость:  {times.mean():.3f} мс (среднее), {np.percentile(times, 95):.1f} мс (P95), {times.min():.3f} мс (мин), {times.max():.1f} мс (макс)")
         results["full"] = (y_true, y_pred, times)
     elif has_combined:
         out("\nONNX модель не найдена — полный пайплайн пропущен.")
@@ -244,6 +246,15 @@ def main():
 
         p95 = {n: np.percentile(r[2], 95) for n, r in results.items()}
         out(f"{'Скорость P95 (мс)':<30} " + " ".join(f"{p95[n]:>14.1f}" for n in names))
+
+        med_sp = {n: np.median(r[2]) for n, r in results.items()}
+        out(f"{'Скорость медиана (мс)':<30} " + " ".join(f"{med_sp[n]:>14.3f}" for n in names))
+
+        min_sp = {n: r[2].min() for n, r in results.items()}
+        out(f"{'Скорость мин (мс)':<30} " + " ".join(f"{min_sp[n]:>14.3f}" for n in names))
+
+        max_sp = {n: r[2].max() for n, r in results.items()}
+        out(f"{'Скорость макс (мс)':<30} " + " ".join(f"{max_sp[n]:>14.1f}" for n in names))
 
     # ── Per-class F1 ─────────────────────────────────────────────────────
     if len(results) >= 2:
