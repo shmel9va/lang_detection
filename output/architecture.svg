@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="760" height="810"
+     viewBox="0 0 760 810"
+     font-family="Arial, Helvetica, sans-serif">
+
+  <defs>
+    <marker id="arr" markerWidth="9" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 9 3.5, 0 7" fill="#555555"/>
+    </marker>
+    <marker id="arr-g" markerWidth="9" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 9 3.5, 0 7" fill="#2E7D32"/>
+    </marker>
+    <marker id="arr-o" markerWidth="9" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 9 3.5, 0 7" fill="#C62828"/>
+    </marker>
+  </defs>
+
+  <!-- Фон -->
+  <rect width="760" height="810" fill="white"/>
+
+  <!-- ══════════════════════════════════════════
+       ВХОДНОЙ ТЕКСТ
+  ══════════════════════════════════════════ -->
+  <rect x="213" y="20" width="274" height="48" rx="7"
+        fill="#E3F2FD" stroke="#1565C0" stroke-width="2.2"/>
+  <text x="350" y="50" text-anchor="middle"
+        font-size="14" font-weight="bold" fill="#0D47A1">ВХОДНОЙ ТЕКСТ</text>
+
+  <!-- Стрелка вниз -->
+  <line x1="350" y1="68" x2="350" y2="92"
+        stroke="#555" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- ══════════════════════════════════════════
+       УРОВЕНЬ 1 — Препроцессор
+  ══════════════════════════════════════════ -->
+  <rect x="88" y="96" width="524" height="70" rx="7"
+        fill="#F7F7F7" stroke="#424242" stroke-width="2"/>
+  <text x="350" y="121" text-anchor="middle"
+        font-size="12" font-weight="bold" fill="#212121">Уровень 1. Препроцессор</text>
+  <text x="350" y="144" text-anchor="middle"
+        font-size="10" fill="#555555">NFKC-нормализация  ·  удаление URL, номеров телефонов, эмодзи</text>
+
+  <!-- Стрелка вниз -->
+  <line x1="350" y1="166" x2="350" y2="190"
+        stroke="#555" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- ══════════════════════════════════════════
+       УРОВЕНЬ 2 — Детектор алфавитов
+  ══════════════════════════════════════════ -->
+  <rect x="88" y="194" width="524" height="88" rx="7"
+        fill="#F7F7F7" stroke="#424242" stroke-width="2"/>
+  <text x="350" y="220" text-anchor="middle"
+        font-size="12" font-weight="bold" fill="#212121">Уровень 2. Детектор уникальных алфавитов</text>
+  <text x="350" y="243" text-anchor="middle"
+        font-size="10" fill="#555555">hy (армянский)  ·  ka (грузинский)  ·  he (иврит)  ·  am (амхарский)</text>
+  <text x="350" y="264" text-anchor="middle"
+        font-size="9" fill="#888888">анализ Unicode-диапазонов; если доля символов алфавита ≥ 30% → немедленный ответ</text>
+
+  <!-- Стрелка к быстрому пути (вправо) -->
+  <line x1="612" y1="238" x2="638" y2="238"
+        stroke="#2E7D32" stroke-width="2" marker-end="url(#arr-g)"/>
+  <!-- Подпись ветки -->
+  <text x="616" y="228" text-anchor="start" font-size="7.5" fill="#2E7D32">уникальный</text>
+  <text x="616" y="238" text-anchor="start" font-size="7.5" fill="#2E7D32">алфавит</text>
+
+  <!-- Блок быстрого пути -->
+  <rect x="640" y="213" width="108" height="52" rx="6"
+        fill="#E8F5E9" stroke="#2E7D32" stroke-width="2"/>
+  <text x="694" y="234" text-anchor="middle"
+        font-size="10" font-weight="bold" fill="#1B5E20">язык, 0.99</text>
+  <text x="694" y="252" text-anchor="middle"
+        font-size="8.5" fill="#388E3C">быстрый путь</text>
+
+  <!-- Стрелка вниз (неоднозначный алфавит) -->
+  <line x1="350" y1="282" x2="350" y2="312"
+        stroke="#555" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="354" y="300" text-anchor="start" font-size="8.5" fill="#777777">неоднозначный алфавит</text>
+
+  <!-- ══════════════════════════════════════════
+       УРОВЕНЬ 3 — fastText
+  ══════════════════════════════════════════ -->
+  <rect x="88" y="316" width="524" height="88" rx="7"
+        fill="#F7F7F7" stroke="#424242" stroke-width="2"/>
+  <text x="350" y="342" text-anchor="middle"
+        font-size="12" font-weight="bold" fill="#212121">Уровень 3. Многоклассовая модель fastText</text>
+  <text x="350" y="365" text-anchor="middle"
+        font-size="10" fill="#555555">топ-2 языка с вероятностями  ·  27 классов  ·  subword n-grams (3–6)</text>
+  <text x="350" y="386" text-anchor="middle"
+        font-size="9" fill="#888888">порог threshold подбирается на val; при вероятности ниже порога → "other"</text>
+
+  <!-- Стрелка к "other" (вправо) -->
+  <line x1="612" y1="360" x2="638" y2="360"
+        stroke="#C62828" stroke-width="2" marker-end="url(#arr-o)"/>
+  <text x="616" y="350" text-anchor="start" font-size="7.5" fill="#C62828">conf &lt;</text>
+  <text x="616" y="360" text-anchor="start" font-size="7.5" fill="#C62828">threshold</text>
+
+  <!-- Блок "other" -->
+  <rect x="640" y="335" width="108" height="52" rx="6"
+        fill="#FFEBEE" stroke="#C62828" stroke-width="2"/>
+  <text x="694" y="357" text-anchor="middle"
+        font-size="11" font-weight="bold" fill="#B71C1C">"other"</text>
+  <text x="694" y="375" text-anchor="middle"
+        font-size="8.5" fill="#C62828">conf &lt; threshold</text>
+
+  <!-- Стрелка вниз (conf ≥ threshold) -->
+  <line x1="350" y1="404" x2="350" y2="432"
+        stroke="#555" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="354" y="421" text-anchor="start" font-size="8.5" fill="#777777">conf ≥ threshold</text>
+
+  <!-- ══════════════════════════════════════════
+       УРОВЕНЬ 4 — Роутер чувствительных пар
+  ══════════════════════════════════════════ -->
+  <rect x="88" y="436" width="524" height="116" rx="7"
+        fill="#F7F7F7" stroke="#424242" stroke-width="2"/>
+  <text x="350" y="462" text-anchor="middle"
+        font-size="12" font-weight="bold" fill="#212121">Уровень 4. Роутер чувствительных языковых пар</text>
+  <text x="350" y="484" text-anchor="middle"
+        font-size="10" fill="#555555">если топ-2 образуют чувствительную пару — активируется бинарный классификатор</text>
+
+  <!-- Пять пар -->
+  <rect x="98"  y="493" width="85" height="32" rx="5" fill="#EDE7F6" stroke="#512DA8" stroke-width="1.5"/>
+  <text x="140" y="513" text-anchor="middle" font-size="9" font-weight="bold" fill="#311B92">hy / az</text>
+
+  <rect x="194" y="493" width="85" height="32" rx="5" fill="#EDE7F6" stroke="#512DA8" stroke-width="1.5"/>
+  <text x="236" y="513" text-anchor="middle" font-size="9" font-weight="bold" fill="#311B92">he / ar</text>
+
+  <rect x="290" y="493" width="85" height="32" rx="5" fill="#EDE7F6" stroke="#512DA8" stroke-width="1.5"/>
+  <text x="332" y="513" text-anchor="middle" font-size="9" font-weight="bold" fill="#311B92">ur / hi</text>
+
+  <rect x="386" y="493" width="85" height="32" rx="5" fill="#EDE7F6" stroke="#512DA8" stroke-width="1.5"/>
+  <text x="428" y="513" text-anchor="middle" font-size="9" font-weight="bold" fill="#311B92">ar / fa</text>
+
+  <rect x="482" y="493" width="85" height="32" rx="5" fill="#EDE7F6" stroke="#512DA8" stroke-width="1.5"/>
+  <text x="524" y="513" text-anchor="middle" font-size="9" font-weight="bold" fill="#311B92">ru / uk</text>
+
+  <text x="350" y="542" text-anchor="middle"
+        font-size="9" fill="#777777">TF-IDF символьных n-грамм (2–4)  +  логистическая регрессия  ·  быстрый путь по уникальным символам</text>
+
+  <!-- Стрелка вниз -->
+  <line x1="350" y1="552" x2="350" y2="580"
+        stroke="#555" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- ══════════════════════════════════════════
+       УРОВЕНЬ 5 — Постпроцессор
+  ══════════════════════════════════════════ -->
+  <rect x="88" y="584" width="524" height="82" rx="7"
+        fill="#F7F7F7" stroke="#424242" stroke-width="2"/>
+  <text x="350" y="610" text-anchor="middle"
+        font-size="12" font-weight="bold" fill="#212121">Уровень 5. Постпроцессор (merge_label)</text>
+  <text x="350" y="632" text-anchor="middle"
+        font-size="10" fill="#555555">hy_arm / hy_lat → hy  ·  uz_lat / uz_cyr → uz  ·  sr_cyr / sr_lat → sr</text>
+  <text x="350" y="650" text-anchor="middle"
+        font-size="9" fill="#888888">ur_ur / ur_lat → ur  ·  ne_nep / ne_lat → ne  ·  ka_lat → ka</text>
+
+  <!-- Стрелка вниз -->
+  <line x1="350" y1="666" x2="350" y2="692"
+        stroke="#555" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- ══════════════════════════════════════════
+       ВЫХОДНОЙ КОД
+  ══════════════════════════════════════════ -->
+  <rect x="155" y="696" width="390" height="50" rx="7"
+        fill="#E3F2FD" stroke="#1565C0" stroke-width="2.2"/>
+  <text x="350" y="726" text-anchor="middle"
+        font-size="13" font-weight="bold" fill="#0D47A1">ISO 639-1 код  +  уверенность (0–1)</text>
+
+  <!-- ══════════════════════════════════════════
+       Подпись рисунка
+  ══════════════════════════════════════════ -->
+  <text x="350" y="776" text-anchor="middle"
+        font-size="11" fill="#333333">Рисунок X — Архитектура разработанной модели идентификации языка текста</text>
+
+</svg>
