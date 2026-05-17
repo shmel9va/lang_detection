@@ -29,15 +29,15 @@ output/*.xlsx
 
 data/*.xlsx
 
-real_data*.csv
 lang_detection_hackathon.csv
-
-.dockerignore
 
 .DS_Store
 Thumbs.db
 
 *.log
 
-chapter2.md
+
+output/distilbert_lang_detection/model.safetensors
+output/distilbert_lang_detection/training_args.bin
+output/distilbert_lang_detection/classification_report.txt
 

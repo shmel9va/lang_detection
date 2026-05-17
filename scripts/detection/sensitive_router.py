@@ -10,46 +10,35 @@
 Загрузка классификаторов при инициализации:
   - Если файл .pkl существует → загружается обученная модель.
   - Если файла нет → создаётся необученный экземпляр (работает только быстрый путь).
-    Это позволяет запускать детектор ещё до обучения бинарных классификаторов.
 """
 
 import os
 from typing import Dict, List, Optional, Tuple
 
-from scripts.detection.sensitive_classifiers.ar_fa import ArFaClassifier
 from scripts.detection.sensitive_classifiers.he_ar import HeArClassifier
 from scripts.detection.sensitive_classifiers.hy_az import HyAzClassifier
 from scripts.detection.sensitive_classifiers.ru_uk import RuUkClassifier
-from scripts.detection.sensitive_classifiers.ur_hi import UrHiClassifier
 from scripts.detection.sensitive_classifiers.base import SensitivePairClassifier
 
 SENSITIVE_PAIRS: Dict[frozenset, str] = {
     frozenset({"hy", "az"}): "hy_az",
     frozenset({"he", "ar"}): "he_ar",
-    frozenset({"ur", "hi"}): "ur_hi",
-    frozenset({"ar", "fa"}): "ar_fa",
     frozenset({"ru", "uk"}): "ru_uk",
 }
 
 _PKL_FILES: Dict[str, str] = {
     "hy_az": "hy_az.pkl",
     "he_ar": "he_ar.pkl",
-    "ur_hi": "ur_hi.pkl",
-    "ar_fa": "ar_fa.pkl",
     "ru_uk": "ru_uk.pkl",
 }
 
 _CLASSIFIER_CLASSES: Dict[str, type] = {
     "hy_az": HyAzClassifier,
     "he_ar": HeArClassifier,
-    "ur_hi": UrHiClassifier,
-    "ar_fa": ArFaClassifier,
     "ru_uk": RuUkClassifier,
 }
 
 
-# Порог уверенности fastText, при котором нет смысла переключаться на бинарный классификатор.
-# Если fastText уверен > FASTTEXT_CONFIDENCE_KEEP, оставляем его результат.
 FASTTEXT_CONFIDENCE_KEEP = 0.95
 
 
@@ -81,8 +70,7 @@ class SensitiveRouter:
         Определить язык с учётом чувствительных пар.
 
         Returns:
-            (iso_code, confidence) или None — если бинарный классификатор
-            не обучен и быстрый путь не сработал (caller должен использовать fastText).
+            (iso_code, confidence) или None.
         """
         if not top2_langs:
             return "other", 0.0
@@ -113,10 +101,6 @@ class SensitiveRouter:
     def is_sensitive_pair(self, lang1: str, lang2: str) -> bool:
         return frozenset({lang1, lang2}) in SENSITIVE_PAIRS
 
-    # ------------------------------------------------------------------
-    # Загрузка классификаторов
-    # ------------------------------------------------------------------
-
     def _load_classifiers(self, verbose: bool = True) -> None:
         for name, filename in _PKL_FILES.items():
             path = os.path.join(self.classifiers_dir, filename)
@@ -131,7 +115,6 @@ class SensitiveRouter:
                         print(f"  [router] Failed to load {name}: {exc}. Using untrained instance.")
                     self.classifiers[name] = _CLASSIFIER_CLASSES[name]()
             else:
-                # Создаём необученный экземпляр — быстрый путь уже работает
                 self.classifiers[name] = _CLASSIFIER_CLASSES[name]()
                 if verbose:
                     print(f"  [router] No saved model for {name}, using fast-path only.")

@@ -75,6 +75,6 @@
   "max_length": 128,
   "best_learning_rate": 8e-05,
   "best_weight_decay": 0.01,
-  "final_macro_f1": 0.9947230704906704,
-  "final_accuracy": 0.9947449768160742
+  "final_macro_f1": 0.9951846254639574,
+  "final_accuracy": 0.9951313755795982
 }

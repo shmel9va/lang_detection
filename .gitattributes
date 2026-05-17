@@ -1,4 +1,6 @@
 output/*.bin filter=lfs diff=lfs merge=lfs -text
+output/**/*.bin filter=lfs diff=lfs merge=lfs -text
 output/*.onnx filter=lfs diff=lfs merge=lfs -text
 output/*.onnx.data filter=lfs diff=lfs merge=lfs -text
 output/*.pkl filter=lfs diff=lfs merge=lfs -text
+output/**/*.ftz filter=lfs diff=lfs merge=lfs -text

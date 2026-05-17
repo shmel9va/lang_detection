@@ -127,7 +127,7 @@ def _pair_errors(y_true, y_pred, pairs):
 
 
 def _resolve_path(filename):
-    candidates = [filename, os.path.join("data_host", filename), os.path.join("/app/data_host", filename)]
+    candidates = [os.path.join("data_host", filename), os.path.join("/app/data_host", filename), filename]
     for p in candidates:
         if os.path.exists(p):
             return p
@@ -240,9 +240,13 @@ def main():
         out(f"\n{'Метрика':<30} " + " ".join(f"{n:>14}" for n in names))
         out("-" * (30 + 16 * len(results)))
 
+        all_labels_sorted = sorted(set(results[names[0]][0]) | set(results[names[0]][1]))
+        labels_no_other = sorted(l for l in all_labels_sorted if l != "other")
+
         for metric_name, metric_fn in [
             ("Accuracy", lambda yt, yp: accuracy_score(yt, yp)),
             ("Macro F1 (all)", lambda yt, yp: f1_score(yt, yp, average="macro", zero_division=0)),
+            ("Macro F1 (no other)", lambda yt, yp: f1_score(yt, yp, labels=labels_no_other, average="macro", zero_division=0)),
             (f"Macro F1* (N≥{MIN_SAMPLES})", lambda yt, yp: f1_score(yt, yp, labels=meaningful_labels, average="macro", zero_division=0)),
         ]:
             vals = {n: metric_fn(*r[:2]) for n, r in results.items()}

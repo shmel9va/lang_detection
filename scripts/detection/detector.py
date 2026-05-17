@@ -1,8 +1,8 @@
 """
 Главный класс LanguageDetector — точка входа для определения языка.
 
-Пайплайн (5 уровней):
-  Level 0: Phrase Dictionary  — точные совпадения частых фраз (~15% текстов)
+Пайплайн (4 уровня):
+  Level 0: Phrase Dictionary  — точные совпадения частых фраз
   Level 1: Script Detector    — уникальные алфавиты: hy, ka, he, am → немедленный ответ
   Level 2: fastText           — если confidence ≥ 0.95 И не чувствительная пара → ответ
   Level 4: Binary classifiers — для чувствительных пар (вызываются ПЕРЕД Transformer)
@@ -25,6 +25,8 @@ import fasttext
 import numpy as np
 
 from scripts.data_processing.preprocess_text import normalize_for_detection, preprocess_text
+from scripts.detection.indiclid_wrapper import IndicLIDWrapper, INDICLID_LANGUAGES
+from scripts.detection.persoarabic_wrapper import PersoArabicLIDWrapper, _PALI_LANGUAGES
 from scripts.detection.script_detector import ScriptDetector
 from scripts.detection.sensitive_router import SensitiveRouter, SENSITIVE_PAIRS
 from scripts.utils.label_mapping import merge_label
@@ -35,13 +37,13 @@ _ONNX_CONFIG_PATH = "label_config.json"
 
 class LanguageDetector:
     """
-    Комбинированная модель определения языка (5-уровневый пайплайн).
+    Комбинированная модель определения языка (6-уровневый пайплайн).
 
     Args:
         fasttext_model_path:       путь к fastText модели (.bin).
-        onnx_model_path:           путь к ONNX модели (.onnx). Если None — Level 3 пропускается.
+        onnx_model_path:           путь к ONNX модели (.onnx). Если None — Level 3b пропускается.
         onnx_config_path:          путь к label_config.json. Если None — ищется рядом с onnx.
-        sensitive_classifiers_dir: директория с .pkl файлами бинарных классификаторов.
+        sensitive_classifiers_dir: директория с .pkl файлов бинарных классификаторов.
         threshold:                 минимальная уверенность fastText для 'other'.
         fasttext_confidence_keep:  если fastText уверен ≥ этого значения и пара не чувствительная → ответ.
         router_verbose:            печатать ли сообщения загрузки.
@@ -70,7 +72,13 @@ class LanguageDetector:
         print(f"Загрузка fastText: {fasttext_model_path}")
         self.ft_model = fasttext.load_model(fasttext_model_path)
 
-        # ── Level 3: DistilBERT ONNX ────────────────────────────────────
+        # ── Level 2b: IndicLID-FTR (для hi/ur/ne) ──────────────────────
+        self.indiclid = IndicLIDWrapper(verbose=router_verbose)
+
+        # ── Level 2c: PersoArabicLID (для ar/fa) ──────────────────────
+        self.persoarabic = PersoArabicLIDWrapper(verbose=router_verbose)
+
+        # ── Level 3: DistilBERT ONNX ───────────────────────────────────
         self.onnx_session = None
         self.onnx_tokenizer = None
         self.onnx_id2label: Optional[Dict[int, str]] = None
@@ -80,7 +88,7 @@ class LanguageDetector:
             self._load_onnx(onnx_model_path, onnx_config_path)
         else:
             print(f"ONNX модель не найдена: {onnx_model_path}")
-            print("  Level 3 (DistilBERT) пропускается. Пайплайн: L0→L1→L2→L4.")
+            print("  Level 3b (DistilBERT) пропускается.")
 
         # ── Level 4: Binary classifiers ─────────────────────────────────
         self.router = SensitiveRouter(
@@ -231,10 +239,23 @@ class LanguageDetector:
             if binary_result is not None:
                 return binary_result
 
+        # ── PersoArabicLID: top-1 ∈ {ar, fa} ──────────────────────
+        if langs[0] in _PALI_LANGUAGES and self.persoarabic.model is not None:
+            pali_result = self.persoarabic.predict(normalized)
+            if pali_result is not None:
+                return pali_result
+
+        # ── IndicLID-FTR: top-1 ∈ {hi, ur, ne} ────────────────────
+        if langs[0] in INDICLID_LANGUAGES and self.indiclid.model is not None:
+            indiclid_result = self.indiclid.predict(normalized)
+            if indiclid_result is not None:
+                return indiclid_result
+
         # ── Level 3: DistilBERT ONNX ───────────────────────────────
-        onnx_result = self._onnx_predict(normalized)
-        if onnx_result is not None:
-            return onnx_result
+        if langs[0] != "hi":
+            onnx_result = self._onnx_predict(normalized)
+            if onnx_result is not None:
+                return onnx_result
 
         # ── Fallback: fastText ответ ───────────────────────────────
         return langs[0], probs_list[0]
